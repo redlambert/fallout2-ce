@@ -108,6 +108,78 @@ static const CompatDirectoryCacheEntry* compatDirectoryEntryCacheGet(const std::
 
     return &cacheEntry;
 }
+
+#ifdef __SWITCH__
+// Directory cache key for the folder that holds `path` ("." for the
+// current folder), matching how compat_resolve_path builds its keys.
+static std::string compatParentDirectoryKey(const std::string& path)
+{
+    size_t separator = path.find_last_of('/');
+    if (separator == std::string::npos) {
+        return ".";
+    }
+
+    if (separator == 0) {
+        return "/";
+    }
+
+    return path.substr(0, separator);
+}
+
+// Forgets cached listings affected by writing, creating or removing `path`:
+// its parent folder, and the path itself plus anything under it in case it
+// is a folder. Reading the SD card is slow on Switch, so this replaces
+// clearing the whole cache, which forced thousands of folder rescans on
+// every map change.
+static void compatDirectoryEntryCacheInvalidatePath(const char* nativePath)
+{
+    std::string path = compatLowercase(nativePath);
+    std::string parent = compatParentDirectoryKey(path);
+    std::string childPrefix = path + "/";
+
+    for (auto it = compatDirectoryEntryCache.begin(); it != compatDirectoryEntryCache.end();) {
+        std::string key = compatLowercase(it->first);
+        bool affected = key == parent
+            || key == path
+            || key.compare(0, childPrefix.size(), childPrefix) == 0;
+
+        if (affected) {
+            it = compatDirectoryEntryCache.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+// True when the cached folder listing shows `nativePath` doesn't exist, so
+// opening it can fail right away instead of asking the SD card. Only used
+// for plain relative paths, where the cache is reliable.
+static bool compatPathKnownMissing(const char* nativePath)
+{
+    std::string path = nativePath;
+    if (path.empty() || path[0] == '/' || path.find(':') != std::string::npos) {
+        return false;
+    }
+
+    if (path == ".." || path.compare(0, 3, "../") == 0 || path.find("/../") != std::string::npos) {
+        return false;
+    }
+
+    std::string parent = compatParentDirectoryKey(path);
+    std::string name = path.substr(parent == "." ? 0 : parent.size() + 1);
+    if (name.empty() || name == "." || name == "..") {
+        return false;
+    }
+
+    const CompatDirectoryCacheEntry* directoryCacheEntry = compatDirectoryEntryCacheGet(parent);
+    if (directoryCacheEntry == nullptr) {
+        // Parent folder doesn't exist.
+        return true;
+    }
+
+    return directoryCacheEntry->entries.find(compatLowercase(name)) == directoryCacheEntry->entries.end();
+}
+#endif
 #else
 static void compatDirectoryEntryCacheClear()
 {
@@ -299,6 +371,16 @@ long compat_filelength(int fd)
 
 int compat_mkdir(const char* path)
 {
+#ifdef __SWITCH__
+    char nativePath[COMPAT_MAX_PATH];
+    compat_prepare_native_path(nativePath, path);
+    compatDirectoryEntryCacheInvalidatePath(nativePath);
+
+    int rc = mkdir(nativePath, 0755);
+    if (rc == 0) {
+        compatDirectoryEntryCacheInvalidatePath(nativePath);
+    }
+#else
     compatDirectoryEntryCacheClear();
 
     char nativePath[COMPAT_MAX_PATH];
@@ -312,6 +394,8 @@ int compat_mkdir(const char* path)
     if (rc == 0) {
         compatDirectoryEntryCacheClear();
     }
+#endif
+
     return rc;
 }
 
@@ -397,6 +481,27 @@ FILE* compat_fopen(const char* path, const char* mode)
 #endif
 
     bool mayWrite = compatFileModeMayWrite(mode);
+
+#ifdef __SWITCH__
+    char nativePath[COMPAT_MAX_PATH];
+    compat_prepare_native_path(nativePath, path);
+
+    if (!mayWrite && compatPathKnownMissing(nativePath)) {
+        switchPerfRecordFileOpen(path, perfStart, false);
+        return nullptr;
+    }
+
+    if (mayWrite) {
+        compatDirectoryEntryCacheInvalidatePath(nativePath);
+    }
+
+    FILE* stream = fopen(nativePath, mode);
+    if (mayWrite && stream != nullptr) {
+        compatDirectoryEntryCacheInvalidatePath(nativePath);
+    }
+
+    switchPerfRecordFileOpen(path, perfStart, stream != nullptr);
+#else
     if (mayWrite) {
         compatDirectoryEntryCacheClear();
     }
@@ -407,9 +512,6 @@ FILE* compat_fopen(const char* path, const char* mode)
     if (mayWrite && stream != nullptr) {
         compatDirectoryEntryCacheClear();
     }
-
-#ifdef __SWITCH__
-    switchPerfRecordFileOpen(path, perfStart, stream != nullptr);
 #endif
 
     return stream;
@@ -418,6 +520,20 @@ FILE* compat_fopen(const char* path, const char* mode)
 gzFile compat_gzopen(const char* path, const char* mode)
 {
     bool mayWrite = compatFileModeMayWrite(mode);
+
+#ifdef __SWITCH__
+    char nativePath[COMPAT_MAX_PATH];
+    compat_prepare_native_path(nativePath, path);
+
+    if (mayWrite) {
+        compatDirectoryEntryCacheInvalidatePath(nativePath);
+    }
+
+    gzFile stream = gzopen(nativePath, mode);
+    if (mayWrite && stream != nullptr) {
+        compatDirectoryEntryCacheInvalidatePath(nativePath);
+    }
+#else
     if (mayWrite) {
         compatDirectoryEntryCacheClear();
     }
@@ -428,6 +544,8 @@ gzFile compat_gzopen(const char* path, const char* mode)
     if (mayWrite && stream != nullptr) {
         compatDirectoryEntryCacheClear();
     }
+#endif
+
     return stream;
 }
 
@@ -463,6 +581,16 @@ char* compat_gzgets(gzFile stream, char* buffer, int maxCount)
 
 int compat_remove(const char* path)
 {
+#ifdef __SWITCH__
+    char nativePath[COMPAT_MAX_PATH];
+    compat_prepare_native_path(nativePath, path);
+    compatDirectoryEntryCacheInvalidatePath(nativePath);
+
+    int rc = remove(nativePath);
+    if (rc == 0) {
+        compatDirectoryEntryCacheInvalidatePath(nativePath);
+    }
+#else
     compatDirectoryEntryCacheClear();
 
     char nativePath[COMPAT_MAX_PATH];
@@ -471,6 +599,8 @@ int compat_remove(const char* path)
     if (rc == 0) {
         compatDirectoryEntryCacheClear();
     }
+#endif
+
     return rc;
 }
 

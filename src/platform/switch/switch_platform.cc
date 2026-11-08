@@ -420,6 +420,13 @@ void switchMouseApply(MouseData* mouseData)
     // movement and low sensitivity still move the cursor.
     static double remainderX = 0.0;
     static double remainderY = 0.0;
+    static unsigned long long lastPollCounter = 0;
+
+    unsigned long long now = SDL_GetPerformanceCounter();
+    double elapsedMs = lastPollCounter != 0
+        ? (now - lastPollCounter) * 1000.0 / static_cast<double>(SDL_GetPerformanceFrequency())
+        : 1000.0 / 60.0;
+    lastPollCounter = now;
 
     HidAnalogStickState stick = padGetStickPos(&gMousePad, 0);
     if (abs(stick.x) > kLeftStickDeadZone || abs(stick.y) > kLeftStickDeadZone) {
@@ -430,7 +437,15 @@ void switchMouseApply(MouseData* mouseData)
             sensitivity = 1.0;
         }
 
-        double speed = gCursorSpeedup * sensitivity * 1.5;
+        // Scale by time since the last poll, so the cursor moves at the same
+        // speed whether a screen runs at 60 fps or, like the save screen,
+        // at 24 fps. Tuned to match the old per-poll speed at 60 fps.
+        double frames = elapsedMs / (1000.0 / 60.0);
+        if (frames > 4.0) {
+            frames = 4.0;
+        }
+
+        double speed = gCursorSpeedup * sensitivity * 1.5 * frames;
         double moveX = (stick.x / 10000.0) * speed + remainderX;
         double moveY = -(stick.y / 10000.0) * speed + remainderY;
 
