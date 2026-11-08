@@ -384,6 +384,11 @@ if(FALLOUT_SWITCH)
 
     target_compile_definitions(${EXECUTABLE_NAME} PUBLIC __SWITCH__)
     target_include_directories(${EXECUTABLE_NAME} PRIVATE "src")
+
+    # Strict C++17 makes the Switch C library (newlib) hide common extras
+    # such as M_PI. GNU mode keeps them visible.
+    set_target_properties(${EXECUTABLE_NAME} PROPERTIES CXX_EXTENSIONS ON)
+    target_compile_definitions(${EXECUTABLE_NAME} PRIVATE _DEFAULT_SOURCE _GNU_SOURCE)
 endif()
 
 if(IOS)
