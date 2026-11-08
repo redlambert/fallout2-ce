@@ -16,6 +16,14 @@ endif()
 
 project(${EXECUTABLE_NAME})
 
+# Nintendo Switch homebrew build. Configure with devkitPro's toolchain:
+#   cmake -DCMAKE_TOOLCHAIN_FILE=$DEVKITPRO/cmake/Switch.cmake
+if(NINTENDO_SWITCH OR CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch")
+    set(FALLOUT_SWITCH ON)
+else()
+    set(FALLOUT_SWITCH OFF)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED YES)
 set(CMAKE_CXX_EXTENSIONS NO)
@@ -368,6 +376,16 @@ else()
     target_compile_definitions(${EXECUTABLE_NAME} PRIVATE HAVE_STB_VORBIS=0)
 endif()
 
+if(FALLOUT_SWITCH)
+    target_sources(${EXECUTABLE_NAME} PUBLIC
+        "src/platform/switch/switch_platform.cc"
+        "src/platform/switch/switch_platform.h"
+    )
+
+    target_compile_definitions(${EXECUTABLE_NAME} PUBLIC __SWITCH__)
+    target_include_directories(${EXECUTABLE_NAME} PRIVATE "src")
+endif()
+
 if(IOS)
     target_sources(${EXECUTABLE_NAME} PUBLIC
         "src/platform/ios/paths.h"
@@ -467,7 +485,25 @@ if(APPLE)
     set(MACOSX_BUNDLE_BUNDLE_VERSION "1.3.0")
 endif()
 
-if((NOT ${CMAKE_SYSTEM_NAME} MATCHES "Emscripten"))
+if(FALLOUT_SWITCH)
+    # SDL2 and zlib come from devkitPro portlibs (switch-sdl2, switch-zlib).
+    # Static linking needs SDL2's own dependencies listed after it.
+    set(DEVKITPRO "$ENV{DEVKITPRO}")
+    if(NOT DEVKITPRO)
+        set(DEVKITPRO "/opt/devkitpro")
+    endif()
+
+    set(SDL2_INCLUDE_DIRS "${DEVKITPRO}/portlibs/switch/include/SDL2")
+    set(SDL2_LIBRARIES SDL2 EGL GLESv2 glapi drm_nouveau nx m)
+    set(SDL2_MAIN_LIBRARIES "")
+    set(ZLIB_INCLUDE_DIRS "${DEVKITPRO}/portlibs/switch/include")
+    set(ZLIB_LIBRARIES z)
+
+    target_link_directories(${EXECUTABLE_NAME} PRIVATE
+        "${DEVKITPRO}/portlibs/switch/lib"
+        "${DEVKITPRO}/libnx/lib"
+    )
+elseif((NOT ${CMAKE_SYSTEM_NAME} MATCHES "Emscripten"))
     if(FALLOUT_VENDORED)
         add_subdirectory("third_party/zlib")
         add_subdirectory("third_party/sdl2")
@@ -533,7 +569,7 @@ target_link_libraries(${EXECUTABLE_NAME} ${SDL2_LIBRARIES})
 target_link_libraries(${EXECUTABLE_NAME} ${SDL2_MAIN_LIBRARIES})
 target_include_directories(${EXECUTABLE_NAME} PRIVATE ${SDL2_INCLUDE_DIRS})
 
-if((NOT ANDROID) AND (NOT IOS) AND (NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten"))
+if((NOT ANDROID) AND (NOT IOS) AND (NOT FALLOUT_SWITCH) AND (NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten"))
     add_executable(ce-dat-tool
         "tools/dat_tool.cc"
         "tools/dat_archive.cc"
@@ -619,7 +655,7 @@ if((NOT ANDROID) AND (NOT IOS) AND (NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten"))
     endif()
 endif()
 
-if((NOT ANDROID) AND (NOT IOS) AND (NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten"))
+if((NOT ANDROID) AND (NOT IOS) AND (NOT FALLOUT_SWITCH) AND (NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten"))
     if(WIN32)
         add_executable(mapper-ce WIN32)
     else()
@@ -727,6 +763,25 @@ if(APPLE)
     endif()
 
     include(CPack)
+endif()
+
+if(FALLOUT_SWITCH)
+    # Package the ELF as two NROs sharing one binary: Fallout 2, and
+    # Fallout et tu (starts inside the Fallout1in2 folder, picked by file name).
+    if(NOT DEFINED FALLOUT_SWITCH_VERSION)
+        set(FALLOUT_SWITCH_VERSION "1.0.0")
+    endif()
+
+    set(NX_TOOLS "${DEVKITPRO}/tools/bin")
+    set(NX_ELF "$<TARGET_FILE:${EXECUTABLE_NAME}>")
+
+    add_custom_command(TARGET ${EXECUTABLE_NAME} POST_BUILD
+        COMMAND "${NX_TOOLS}/nacptool" --create "Fallout 2 CE" "Interplay / fallout2-ce / Switch port" "${FALLOUT_SWITCH_VERSION}" "${CMAKE_BINARY_DIR}/fallout2-ce.nacp"
+        COMMAND "${NX_TOOLS}/elf2nro" "${NX_ELF}" "${CMAKE_BINARY_DIR}/fallout2-ce.nro" "--icon=${CMAKE_SOURCE_DIR}/os/switch/icon.jpg" "--nacp=${CMAKE_BINARY_DIR}/fallout2-ce.nacp"
+        COMMAND "${NX_TOOLS}/nacptool" --create "Fallout et tu" "Interplay / Fallout et tu team / fallout2-ce" "${FALLOUT_SWITCH_VERSION}" "${CMAKE_BINARY_DIR}/fallout1-ettu.nacp"
+        COMMAND "${NX_TOOLS}/elf2nro" "${NX_ELF}" "${CMAKE_BINARY_DIR}/fallout1-ettu.nro" "--icon=${CMAKE_SOURCE_DIR}/os/switch/icon_ettu.jpg" "--nacp=${CMAKE_BINARY_DIR}/fallout1-ettu.nacp"
+        VERBATIM
+    )
 endif()
 
 # Add option to enable AddressSanitizer
