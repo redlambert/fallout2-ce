@@ -54,6 +54,10 @@ static bool gSwitchInputInitialized = false;
 
 static double gCursorSpeedup = 1.0;
 
+// Options read from fallout2_nx.ini at startup.
+static bool gCpuBoostEnabled = true;
+static bool gPerfLogEnabled = true;
+
 static bool fileExists(const char* dir, const char* name)
 {
     char path[512];
@@ -111,6 +115,55 @@ static bool launchedAsEtTu(int argc, char** argv)
     return false;
 }
 
+// Reads a 0/1 value from fallout2_nx.ini without the game's config system,
+// which isn't ready this early in startup.
+static bool readIniFlag(const char* path, const char* key, bool defaultValue)
+{
+    FILE* stream = fopen(path, "rt");
+    if (stream == nullptr) {
+        return defaultValue;
+    }
+
+    bool value = defaultValue;
+    size_t keyLength = strlen(key);
+    char line[256];
+
+    while (fgets(line, sizeof(line), stream) != nullptr) {
+        char* ch = line;
+        while (*ch == ' ' || *ch == '\t') {
+            ch++;
+        }
+
+        if (SDL_strncasecmp(ch, key, keyLength) != 0) {
+            continue;
+        }
+
+        ch += keyLength;
+        while (*ch == ' ' || *ch == '\t') {
+            ch++;
+        }
+
+        if (*ch != '=') {
+            continue;
+        }
+
+        ch++;
+        while (*ch == ' ' || *ch == '\t') {
+            ch++;
+        }
+
+        value = *ch == '1';
+    }
+
+    fclose(stream);
+    return value;
+}
+
+static void restoreCpuClock()
+{
+    appletSetCpuBoostMode(static_cast<ApmCpuBoostMode>(0));
+}
+
 void switchPlatformInit(int argc, char** argv)
 {
     SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
@@ -131,6 +184,22 @@ void switchPlatformInit(int argc, char** argv)
         snprintf(etTuDir, sizeof(etTuDir), "%s%s", gSwitchBaseDir, kEtTuSubdir);
         if (dirExists(etTuDir)) {
             snprintf(gameDir, sizeof(gameDir), "%s", etTuDir);
+        }
+    }
+
+    char configPath[512];
+    snprintf(configPath, sizeof(configPath), "%s%s", gSwitchBaseDir, kSwitchConfigFileName);
+    gCpuBoostEnabled = readIniFlag(configPath, "CPU_BOOST", true);
+    gPerfLogEnabled = readIniFlag(configPath, "PERF_LOG", true);
+
+    if (gCpuBoostEnabled) {
+        // Raises the CPU from 1020 MHz to 1785 MHz while the game runs.
+        // Only works when launched through a game (title override), not the
+        // album applet, so a failure here is ignored.
+        if (R_SUCCEEDED(appletSetCpuBoostMode(static_cast<ApmCpuBoostMode>(1)))) {
+            atexit(restoreCpuClock);
+        } else {
+            gCpuBoostEnabled = false;
         }
     }
 
@@ -374,6 +443,86 @@ void switchMouseApply(MouseData* mouseData)
     u64 held = padGetButtons(&gMousePad);
     mouseData->buttons[0] |= (held & HidNpadButton_ZL) != 0;
     mouseData->buttons[1] |= (held & HidNpadButton_ZR) != 0;
+}
+
+// MARK: Performance log
+
+static unsigned long long gPerfWindowStart = 0;
+static unsigned long long gPerfLastPresentEnd = 0;
+static unsigned long long gPerfProgramStart = 0;
+static int gPerfFrames = 0;
+static double gPerfFrameTotalMs = 0.0;
+static double gPerfFrameMaxMs = 0.0;
+static double gPerfPresentTotalMs = 0.0;
+static double gPerfPresentMaxMs = 0.0;
+static int gPerfFileOpens = 0;
+
+void switchPerfCountFileOpen()
+{
+    gPerfFileOpens++;
+}
+
+void switchPerfRecordPresent(unsigned long long presentStartCounter)
+{
+    if (!gPerfLogEnabled) {
+        return;
+    }
+
+    unsigned long long now = SDL_GetPerformanceCounter();
+    double frequency = static_cast<double>(SDL_GetPerformanceFrequency());
+
+    if (gPerfProgramStart == 0) {
+        gPerfProgramStart = now;
+        gPerfWindowStart = now;
+        gPerfLastPresentEnd = now;
+        return;
+    }
+
+    double presentMs = (now - presentStartCounter) * 1000.0 / frequency;
+    double frameMs = (now - gPerfLastPresentEnd) * 1000.0 / frequency;
+    gPerfLastPresentEnd = now;
+
+    gPerfFrames++;
+    gPerfFrameTotalMs += frameMs;
+    gPerfPresentTotalMs += presentMs;
+    if (frameMs > gPerfFrameMaxMs) {
+        gPerfFrameMaxMs = frameMs;
+    }
+    if (presentMs > gPerfPresentMaxMs) {
+        gPerfPresentMaxMs = presentMs;
+    }
+
+    double windowSeconds = (now - gPerfWindowStart) / frequency;
+    if (windowSeconds < 5.0) {
+        return;
+    }
+
+    char path[512];
+    snprintf(path, sizeof(path), "%sperf.log", gSwitchBaseDir);
+
+    FILE* stream = fopen(path, "at");
+    if (stream != nullptr) {
+        double elapsedSeconds = (now - gPerfProgramStart) / frequency;
+        fprintf(stream,
+            "t=%.0fs cpu_boost=%d fps=%.1f frame_avg=%.1fms frame_max=%.1fms present_avg=%.1fms present_max=%.1fms file_opens=%d\n",
+            elapsedSeconds,
+            gCpuBoostEnabled ? 1 : 0,
+            gPerfFrames / windowSeconds,
+            gPerfFrameTotalMs / gPerfFrames,
+            gPerfFrameMaxMs,
+            gPerfPresentTotalMs / gPerfFrames,
+            gPerfPresentMaxMs,
+            gPerfFileOpens);
+        fclose(stream);
+    }
+
+    gPerfWindowStart = SDL_GetPerformanceCounter();
+    gPerfFrames = 0;
+    gPerfFrameTotalMs = 0.0;
+    gPerfFrameMaxMs = 0.0;
+    gPerfPresentTotalMs = 0.0;
+    gPerfPresentMaxMs = 0.0;
+    gPerfFileOpens = 0;
 }
 
 } // namespace fallout

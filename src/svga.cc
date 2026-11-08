@@ -490,12 +490,20 @@ void renderFpsCounter()
 
 void renderPresent()
 {
+#ifdef __SWITCH__
+    unsigned long long presentStart = SDL_GetPerformanceCounter();
+#endif
+
     SDL_UpdateTexture(gSdlTexture, nullptr, gSdlTextureSurface->pixels, gSdlTextureSurface->pitch);
     SDL_RenderClear(gSdlRenderer);
     SDL_RenderCopy(gSdlRenderer, gSdlTexture, nullptr, nullptr);
     // render movie SDL texture if present
     movieRenderDirectOverlay();
     SDL_RenderPresent(gSdlRenderer);
+
+#ifdef __SWITCH__
+    switchPerfRecordPresent(presentStart);
+#endif
 }
 
 } // namespace fallout

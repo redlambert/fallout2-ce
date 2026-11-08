@@ -1,5 +1,9 @@
 #include "platform_compat.h"
 
+#ifdef __SWITCH__
+#include "platform/switch/switch_platform.h"
+#endif
+
 #include <string.h>
 
 #include <string>
@@ -376,6 +380,10 @@ unsigned int compat_timeGetTime()
 
 FILE* compat_fopen(const char* path, const char* mode)
 {
+#ifdef __SWITCH__
+    switchPerfCountFileOpen();
+#endif
+
     bool mayWrite = compatFileModeMayWrite(mode);
     if (mayWrite) {
         compatDirectoryEntryCacheClear();
