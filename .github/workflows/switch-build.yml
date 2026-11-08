@@ -1,0 +1,95 @@
+name: Switch build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - switch
+    tags:
+      - "switch-*"
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  ce-dat:
+    name: Build ce.dat
+    uses: ./.github/workflows/reusable-build-ce-dat.yml
+    with:
+      preset: linux-x64-release
+
+  switch:
+    name: Switch NROs
+    needs: [ce-dat]
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64:latest
+
+    steps:
+      - name: Install git
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git zip
+
+      - name: Clone
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Mark repo safe for git
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/switch-* ]]; then
+            echo "value=${GITHUB_REF_NAME#switch-}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=0.0.0-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          cmake -S . -B build \
+            -DCMAKE_TOOLCHAIN_FILE="$DEVKITPRO/cmake/Switch.cmake" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFALLOUT_SWITCH_VERSION="${{ steps.version.outputs.value }}"
+
+      - name: Build
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          cmake --build build --parallel "$(nproc)"
+
+      - name: Download ce.dat
+        uses: actions/download-artifact@v4
+        with:
+          name: ce-dat
+          path: ce-dat
+
+      - name: Package
+        run: |
+          mkdir -p package/switch/fallout2
+          cp build/fallout2-ce.nro package/switch/fallout2/
+          cp build/fallout1-ettu.nro package/switch/fallout2/
+          cp ce-dat/ce.dat package/switch/fallout2/
+          cp os/switch/fallout2_nx.ini package/switch/fallout2/
+          cp os/switch/README.md package/README-SWITCH.md
+          cd package
+          zip -r ../fallout2-ce-switch.zip .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fallout2-ce-switch
+          path: package
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/switch-')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: fallout2-ce-switch.zip
