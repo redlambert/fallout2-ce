@@ -513,6 +513,11 @@ void _mouse_info()
 #endif
 
             if (mouseDeviceUsesRelativeMode()) {
+#ifdef __SWITCH__
+                // Touch screen taps click where the finger is, not where
+                // the stick-driven cursor happens to be.
+                _mouse_set_position(gesture.x, gesture.y);
+#endif
                 if (gesture.numberOfTouches == 1) {
                     _mouse_simulate_input(0, 0, MouseButtonEvent::LeftButtonDown);
                 } else if (gesture.numberOfTouches == 2) {
@@ -548,7 +553,12 @@ void _mouse_info()
                 }
             } else if (gesture.type == kPan) {
                 if (!touch_get_pan_mode() && gesture.numberOfTouches == 1) {
+#ifdef __SWITCH__
+                    // Cursor follows the finger on the Switch touch screen.
+                    _mouse_set_position(gesture.x, gesture.y);
+#else
                     _mouse_simulate_input(gesture.x - prevx, gesture.y - prevy, MouseButtonEvent::None);
+#endif
                 } else if (touch_get_pan_mode() || gesture.numberOfTouches == 2) {
                     int coefficient = touch_get_pan_mode() ? 8 : 2;
                     gMouseWheelX = (prevx - gesture.x) / coefficient;
@@ -831,6 +841,11 @@ void mouseSetSensitivity(double value)
     if (value >= MOUSE_SENSITIVITY_MIN && value <= MOUSE_SENSITIVITY_MAX) {
         gMouseSensitivity = value;
     }
+}
+
+double mouseGetSensitivity()
+{
+    return gMouseSensitivity;
 }
 
 void mouseGetPositionInWindow(int win, int* x, int* y)

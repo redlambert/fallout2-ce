@@ -6,6 +6,10 @@
 #include "svga.h"
 #include "win32.h"
 
+#ifdef __SWITCH__
+#include "platform/switch/switch_platform.h"
+#endif
+
 namespace fallout {
 
 static int gMouseWheelDeltaX = 0;
@@ -31,6 +35,10 @@ bool directInputInit()
     if (!keyboardDeviceInit()) {
         goto err;
     }
+
+#ifdef __SWITCH__
+    switchInputInit();
+#endif
 
     return true;
 
@@ -58,6 +66,12 @@ bool mouseDeviceInitMode()
     // Mouse sensitivity settings can only apply in relative mode.
 
     bool wantsRelativeMode = gProgramIsActive && (screenIsExclusiveFullscreen() || settings.screen.mouse_lock);
+
+#ifdef __SWITCH__
+    // The cursor is driven by the left stick, which only works with
+    // relative movement.
+    wantsRelativeMode = true;
+#endif
 
     if (wantsRelativeMode) {
         mouseRelativeMode = true;
@@ -108,6 +122,10 @@ bool mouseDeviceGetData(MouseData* mouseState)
 
     gMouseWheelDeltaX = 0;
     gMouseWheelDeltaY = 0;
+
+#ifdef __SWITCH__
+    switchMouseApply(mouseState);
+#endif
 
     return true;
 }

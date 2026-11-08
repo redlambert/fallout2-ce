@@ -852,7 +852,14 @@ MainMenuOption mainMenuWindowHandleEvents()
             }
         }
 
-        if (keyCode == KEY_ESCAPE || _game_user_wants_to_quit == GAME_QUIT_REQUEST_EXIT) {
+        bool exitRequested = keyCode == KEY_ESCAPE;
+#ifdef __SWITCH__
+        // The + button sends Escape. Don't let it quit from the main menu,
+        // use the Exit button instead.
+        exitRequested = false;
+#endif
+
+        if (exitRequested || _game_user_wants_to_quit == GAME_QUIT_REQUEST_EXIT) {
             rc = MainMenuOption::Exit;
 
             // NOTE: Uninline.

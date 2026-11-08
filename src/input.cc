@@ -22,7 +22,19 @@
 #include "win32.h"
 #include "window_manager.h"
 
+#ifdef __SWITCH__
+#include "platform/switch/switch_platform.h"
+#endif
+
 namespace fallout {
+
+#ifdef __SWITCH__
+// True while the Switch on-screen keyboard is in use. Controller mapping is
+// paused and typed text is converted into key presses.
+static bool gSwitchTextInputActive = false;
+
+static void switchHandleTextInput(const char* text);
+#endif
 
 typedef struct InputEvent {
     // This is either logical key or input event id, which can be either
@@ -998,6 +1010,13 @@ void _GNW95_process_message()
 
     KeyboardData keyboardData;
     SDL_Event e;
+
+#ifdef __SWITCH__
+    // Controller buttons are pushed as SDL key events, so poll them first and
+    // let the loop below handle them like a real keyboard.
+    switchInputPoll(gSwitchTextInputActive);
+#endif
+
     while (SDL_PollEvent(&e)) {
         switch (e.type) {
         case SDL_MOUSEMOTION:
@@ -1020,6 +1039,13 @@ void _GNW95_process_message()
             break;
         case SDL_KEYDOWN:
         case SDL_KEYUP: {
+#ifdef __SWITCH__
+            // Typed text arrives as SDL_TEXTINPUT instead. Key releases still
+            // go through so nothing is left held down.
+            if (gSwitchTextInputActive && e.type == SDL_KEYDOWN) {
+                break;
+            }
+#endif
             keyboardData.key = e.key.keysym.scancode;
             keyboardData.down = (e.key.state & SDL_PRESSED) != 0;
             bool syntheticSfallKey = sfall_kb_consume_synthetic_key_event(keyboardData.key, keyboardData.down);
@@ -1037,6 +1063,11 @@ void _GNW95_process_message()
             }
             break;
         }
+#ifdef __SWITCH__
+        case SDL_TEXTINPUT:
+            switchHandleTextInput(e.text.text);
+            break;
+#endif
         case SDL_WINDOWEVENT:
             switch (e.window.event) {
             case SDL_WINDOWEVENT_EXPOSED:
@@ -1069,7 +1100,12 @@ void _GNW95_process_message()
 
     touch_process_gesture();
 
-    if (gProgramIsActive && !keyboardIsDisabled()) {
+    bool processKeyRepeat = gProgramIsActive && !keyboardIsDisabled();
+#ifdef __SWITCH__
+    processKeyRepeat = processKeyRepeat && !gSwitchTextInputActive;
+#endif
+
+    if (processKeyRepeat) {
         // NOTE: Uninline
         int tick = getTicks();
 
@@ -1137,12 +1173,103 @@ void _GNW95_lost_focus()
 
 void beginTextInput()
 {
+#ifdef __SWITCH__
+    gSwitchTextInputActive = true;
+#endif
     SDL_StartTextInput();
 }
 
 void endTextInput()
 {
     SDL_StopTextInput();
+#ifdef __SWITCH__
+    gSwitchTextInputActive = false;
+#endif
 }
+
+#ifdef __SWITCH__
+static SDL_Scancode switchCharToScancode(char ch)
+{
+    if (ch >= 'a' && ch <= 'z') {
+        return static_cast<SDL_Scancode>(SDL_SCANCODE_A + (ch - 'a'));
+    }
+
+    if (ch >= 'A' && ch <= 'Z') {
+        return static_cast<SDL_Scancode>(SDL_SCANCODE_A + (ch - 'A'));
+    }
+
+    if (ch >= '1' && ch <= '9') {
+        return static_cast<SDL_Scancode>(SDL_SCANCODE_1 + (ch - '1'));
+    }
+
+    switch (ch) {
+    case '0':
+        return SDL_SCANCODE_0;
+    case ' ':
+        return SDL_SCANCODE_SPACE;
+    case '-':
+        return SDL_SCANCODE_MINUS;
+    case '=':
+        return SDL_SCANCODE_EQUALS;
+    case '[':
+        return SDL_SCANCODE_LEFTBRACKET;
+    case ']':
+        return SDL_SCANCODE_RIGHTBRACKET;
+    case '\\':
+        return SDL_SCANCODE_BACKSLASH;
+    case ';':
+        return SDL_SCANCODE_SEMICOLON;
+    case '\'':
+        return SDL_SCANCODE_APOSTROPHE;
+    case ',':
+        return SDL_SCANCODE_COMMA;
+    case '.':
+        return SDL_SCANCODE_PERIOD;
+    case '/':
+        return SDL_SCANCODE_SLASH;
+    default:
+        return SDL_SCANCODE_UNKNOWN;
+    }
+}
+
+// Types text from the on-screen keyboard as individual key presses.
+static void switchHandleTextInput(const char* text)
+{
+    if (keyboardIsDisabled()) {
+        return;
+    }
+
+    KeyboardData keyboardData;
+
+    for (const char* ch = text; *ch != '\0'; ch++) {
+        SDL_Scancode scancode = switchCharToScancode(*ch);
+        if (scancode == SDL_SCANCODE_UNKNOWN) {
+            continue;
+        }
+
+        bool uppercase = *ch >= 'A' && *ch <= 'Z';
+
+        if (uppercase) {
+            keyboardData.key = SDL_SCANCODE_LSHIFT;
+            keyboardData.down = 1;
+            _GNW95_process_key(&keyboardData);
+        }
+
+        keyboardData.key = scancode;
+        keyboardData.down = 1;
+        _GNW95_process_key(&keyboardData);
+
+        keyboardData.key = scancode;
+        keyboardData.down = 0;
+        _GNW95_process_key(&keyboardData);
+
+        if (uppercase) {
+            keyboardData.key = SDL_SCANCODE_LSHIFT;
+            keyboardData.down = 0;
+            _GNW95_process_key(&keyboardData);
+        }
+    }
+}
+#endif
 
 } // namespace fallout

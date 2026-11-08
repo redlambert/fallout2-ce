@@ -72,6 +72,7 @@ MouseButtonEvent mouseGetEvent();
 bool cursorIsHidden();
 void _mouse_get_raw_state(int* out_x, int* out_y, MouseButtonEvent* out_buttons);
 void mouseSetSensitivity(double value);
+double mouseGetSensitivity();
 
 void mouseGetPositionInWindow(int win, int* x, int* y);
 bool mouseHitTestInWindow(int win, int left, int top, int right, int bottom);

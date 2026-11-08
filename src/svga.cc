@@ -23,6 +23,10 @@
 #include "window_manager.h"
 #include "window_manager_private.h"
 
+#ifdef __SWITCH__
+#include "platform/switch/switch_platform.h"
+#endif
+
 namespace fallout {
 
 static bool createRenderer(int width, int height);
@@ -113,6 +117,11 @@ int _GNW95_init_mode_ex(int width, int height, int bpp)
     width = settings.screen.resolution_x;
     height = settings.screen.resolution_y;
     int scale = settings.screen.scale;
+    WindowMode windowMode = settings.screen.windowed;
+
+#ifdef __SWITCH__
+    switchApplyScreenOverrides(&width, &height, &scale, &windowMode);
+#endif
 
     // Only allow scaling if resulting game resolution is >= 640x480
     if ((width / scale) < 640 || (height / scale) < 480) {
@@ -122,7 +131,7 @@ int _GNW95_init_mode_ex(int width, int height, int bpp)
         height /= scale;
     }
 
-    if (_GNW95_init_window(width, height, settings.screen.windowed, scale) == -1) {
+    if (_GNW95_init_window(width, height, windowMode, scale) == -1) {
         return -1;
     }
 

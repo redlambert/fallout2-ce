@@ -30,6 +30,10 @@
 #include "platform/ios/paths.h"
 #endif
 
+#ifdef __SWITCH__
+#include "platform/switch/switch_platform.h"
+#endif
+
 // explicit `atexit` group
 #include "audio_engine.h"
 
@@ -55,6 +59,18 @@ const char* getMacOsBundleResourcesPath()
 
 int main(int argc, char* argv[])
 {
+#ifdef __SWITCH__
+    // Config loading reads argv[0], so make sure there always is one.
+    static char switchDefaultArg0[] = "fallout2-ce";
+    static char* switchDefaultArgv[] = { switchDefaultArg0, nullptr };
+    if (argc < 1 || argv == nullptr || argv[0] == nullptr) {
+        argc = 1;
+        argv = switchDefaultArgv;
+    }
+
+    switchPlatformInit(argc, argv);
+#endif
+
     scanUnimplementdParseCommandLineArguments(argc, argv);
 
     int rc;
