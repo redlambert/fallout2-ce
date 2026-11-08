@@ -31,6 +31,11 @@ void switchInputPoll(bool textInputActive);
 // Left stick moves the cursor, ZL/ZR are left/right mouse buttons.
 void switchMouseApply(MouseData* mouseData);
 
+// Performance logging. When PERF_LOG=1 in fallout2_nx.ini, a summary line is
+// appended to perf.log in the base folder every 5 seconds.
+void switchPerfRecordPresent(unsigned long long presentStartCounter);
+void switchPerfCountFileOpen();
+
 } // namespace fallout
 
 #endif /* __SWITCH__ */
