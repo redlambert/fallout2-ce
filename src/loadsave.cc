@@ -952,7 +952,12 @@ int lsgSaveGame(LoadSaveMode mode)
                 doubleClickSlot = -1;
             }
 
+#ifdef __SWITCH__
+            // 60 fps so the stick-driven cursor stays smooth on this screen.
+            delay_ms(1000 / 60 - (getTicks() - tick));
+#else
             delay_ms(1000 / 24 - (getTicks() - tick));
+#endif
         }
 
         if (rc == 1) {

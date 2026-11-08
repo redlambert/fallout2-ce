@@ -4,10 +4,12 @@
 #include "platform/switch/switch_platform.h"
 #endif
 
+#include <errno.h>
 #include <string.h>
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #ifdef _WIN32
 #include <direct.h>
@@ -54,6 +56,12 @@ typedef struct CompatDirectoryCacheEntry {
 static constexpr size_t kCompatDirectoryEntryCacheMaxSize = 1024;
 static std::unordered_map<std::string, CompatDirectoryCacheEntry> compatDirectoryEntryCache;
 
+#ifdef __SWITCH__
+// Folders known not to exist. Checking for a missing folder on the Switch SD
+// card is slow, and mods often lack most subfolders, so remember the misses.
+static std::unordered_set<std::string> compatMissingDirectoryCache;
+#endif
+
 static std::string compatLowercase(std::string value)
 {
     for (char& ch : value) {
@@ -68,6 +76,10 @@ static void compatDirectoryEntryCacheClear()
     switchPerfCountDirectoryCacheClear();
 #endif
 
+#ifdef __SWITCH__
+    compatMissingDirectoryCache.clear();
+#endif
+
     compatDirectoryEntryCache.clear();
 }
 
@@ -79,11 +91,22 @@ static const CompatDirectoryCacheEntry* compatDirectoryEntryCacheGet(const std::
     }
 
 #ifdef __SWITCH__
+    if (compatMissingDirectoryCache.find(compatLowercase(directoryPath)) != compatMissingDirectoryCache.end()) {
+        return nullptr;
+    }
+#endif
+
+#ifdef __SWITCH__
     unsigned long long perfStart = SDL_GetPerformanceCounter();
 #endif
 
     DIR* dir = opendir(directoryPath.c_str());
     if (dir == nullptr) {
+#ifdef __SWITCH__
+        if (errno == ENOENT || errno == ENOTDIR) {
+            compatMissingDirectoryCache.insert(compatLowercase(directoryPath));
+        }
+#endif
         return nullptr;
     }
 
@@ -145,6 +168,19 @@ static void compatDirectoryEntryCacheInvalidatePath(const char* nativePath)
 
         if (affected) {
             it = compatDirectoryEntryCache.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    for (auto it = compatMissingDirectoryCache.begin(); it != compatMissingDirectoryCache.end();) {
+        const std::string& key = *it;
+        bool affected = key == parent
+            || key == path
+            || key.compare(0, childPrefix.size(), childPrefix) == 0;
+
+        if (affected) {
+            it = compatMissingDirectoryCache.erase(it);
         } else {
             ++it;
         }
@@ -496,6 +532,10 @@ FILE* compat_fopen(const char* path, const char* mode)
     }
 
     FILE* stream = fopen(nativePath, mode);
+    if (stream == nullptr && errno != ENOENT && errno != ENOTDIR) {
+        switchPerfRecordFileOpenError(path, errno);
+    }
+
     if (mayWrite && stream != nullptr) {
         compatDirectoryEntryCacheInvalidatePath(nativePath);
     }

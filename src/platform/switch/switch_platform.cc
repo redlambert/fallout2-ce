@@ -165,9 +165,23 @@ static bool readIniFlag(const char* path, const char* key, bool defaultValue)
     return value;
 }
 
+static unsigned int gCpuBoostFailures = 0;
+static unsigned int gCpuBoostLastError = 0;
+
 static void restoreCpuClock()
 {
     appletSetCpuBoostMode(static_cast<ApmCpuBoostMode>(0));
+}
+
+// Asks for the higher CPU clock. Opening a system screen (such as the
+// on-screen keyboard) resets it, so this is repeated every few seconds.
+static void applyCpuBoost()
+{
+    Result rc = appletSetCpuBoostMode(static_cast<ApmCpuBoostMode>(1));
+    if (R_FAILED(rc)) {
+        gCpuBoostFailures++;
+        gCpuBoostLastError = rc;
+    }
 }
 
 void switchPlatformInit(int argc, char** argv)
@@ -201,7 +215,7 @@ void switchPlatformInit(int argc, char** argv)
     if (gCpuBoostEnabled) {
         // Raises the CPU from 1020 MHz to 1785 MHz while the game runs.
         // Only works when launched through a game (title override), not the
-        // album applet, so a failure here is ignored.
+        // album applet, so a failure here turns the option off.
         if (R_SUCCEEDED(appletSetCpuBoostMode(static_cast<ApmCpuBoostMode>(1)))) {
             atexit(restoreCpuClock);
         } else {
@@ -381,10 +395,24 @@ void switchInputPoll(bool textInputActive)
         // Swallow whatever was pressed while the on-screen keyboard was up.
         padUpdate(&gKeyboardPad);
         wasTextInputActive = false;
+
+        if (gCpuBoostEnabled) {
+            applyCpuBoost();
+        }
+
         return;
     }
 
     padUpdate(&gKeyboardPad);
+
+    if (gCpuBoostEnabled) {
+        static unsigned long long lastBoostCounter = 0;
+        unsigned long long now = SDL_GetPerformanceCounter();
+        if (lastBoostCounter == 0 || now - lastBoostCounter >= 2 * SDL_GetPerformanceFrequency()) {
+            applyCpuBoost();
+            lastBoostCounter = now;
+        }
+    }
 
     u64 down = padGetButtonsDown(&gKeyboardPad);
     u64 up = padGetButtonsUp(&gKeyboardPad);
@@ -505,6 +533,10 @@ static double gPerfDirectoryScanTotalMs = 0.0;
 static double gPerfDirectoryScanMaxMs = 0.0;
 static char gPerfDirectoryScanMaxPath[256] = "";
 static int gPerfDirectoryCacheClears = 0;
+static int gPerfFileOpenErrors = 0;
+static int gPerfFileOpenLastError = 0;
+static char gPerfFileOpenLastErrorPath[256] = "";
+static FILE* gPerfLogStream = nullptr;
 static std::unordered_map<std::string, PerfFileStats> gPerfFileStats;
 
 static double perfMsSince(unsigned long long startCounter)
@@ -581,6 +613,17 @@ void switchPerfRecordDirectoryScan(const char* path, unsigned long long startCou
     }
 }
 
+void switchPerfRecordFileOpenError(const char* path, int error)
+{
+    if (!gPerfLogEnabled) {
+        return;
+    }
+
+    gPerfFileOpenErrors++;
+    gPerfFileOpenLastError = error;
+    snprintf(gPerfFileOpenLastErrorPath, sizeof(gPerfFileOpenLastErrorPath), "%s", path);
+}
+
 void switchPerfCountDirectoryCacheClear()
 {
     if (!gPerfLogEnabled) {
@@ -611,6 +654,9 @@ static void perfResetWindow(unsigned long long now)
     gPerfDirectoryScanMaxMs = 0.0;
     gPerfDirectoryScanMaxPath[0] = '\0';
     gPerfDirectoryCacheClears = 0;
+    gPerfFileOpenErrors = 0;
+    gPerfFileOpenLastError = 0;
+    gPerfFileOpenLastErrorPath[0] = '\0';
     gPerfFileStats.clear();
 }
 
@@ -644,6 +690,14 @@ static void perfWriteWindow(FILE* stream, double elapsedSeconds, double windowSe
         gPerfDirectoryScanMaxMs,
         gPerfDirectoryScanMaxPath,
         gPerfDirectoryCacheClears);
+
+    fprintf(stream,
+        "  cpu_boost_failures=%u last_boost_error=0x%x open_errors=%d last_open_error=%d (%s)\n",
+        gCpuBoostFailures,
+        gCpuBoostLastError,
+        gPerfFileOpenErrors,
+        gPerfFileOpenLastError,
+        gPerfFileOpenLastErrorPath);
 
     if (gPerfFileStats.empty()) {
         return;
@@ -705,15 +759,18 @@ void switchPerfRecordPresent(unsigned long long presentStartCounter)
         return;
     }
 
-    char path[512];
-    snprintf(path, sizeof(path), "%sperf.log", gSwitchBaseDir);
+    // Kept open for the whole session, so logging still works even if the
+    // game runs out of file handles. Plain fopen on purpose: the game's own
+    // file functions are what's being measured.
+    if (gPerfLogStream == nullptr) {
+        char path[512];
+        snprintf(path, sizeof(path), "%sperf.log", gSwitchBaseDir);
+        gPerfLogStream = fopen(path, "at");
+    }
 
-    // Plain fopen on purpose: the game's own file functions are what's
-    // being measured.
-    FILE* stream = fopen(path, "at");
-    if (stream != nullptr) {
-        perfWriteWindow(stream, (now - gPerfProgramStart) / frequency, windowSeconds);
-        fclose(stream);
+    if (gPerfLogStream != nullptr) {
+        perfWriteWindow(gPerfLogStream, (now - gPerfProgramStart) / frequency, windowSeconds);
+        fflush(gPerfLogStream);
     }
 
     perfResetWindow(SDL_GetPerformanceCounter());
