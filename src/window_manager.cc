@@ -19,6 +19,10 @@
 #include "win32.h"
 #include "window_manager_private.h"
 
+#ifdef __SWITCH__
+#include "platform/switch/switch_platform.h"
+#endif
+
 namespace fallout {
 
 #define MAX_WINDOW_COUNT (50)
@@ -803,6 +807,10 @@ void windowRefreshRect(int win, const Rect* rect)
 // 0x4D6FD8
 void _GNW_win_refresh(Window* window, Rect* rect, unsigned char* dest)
 {
+#ifdef __SWITCH__
+    SwitchPerfZone perfZone(SwitchPerfZoneId::WindowRefresh);
+#endif
+
     // dest is only used when refreshing the portion of the screen containing the cursor (which is subsequently drawn on the buffer)
 
     RectListNode *refreshRectList, *clipRect, *screenRect, *nextRect;

@@ -17,6 +17,10 @@
 #include "sfall_global_scripts.h"
 #include "svga.h"
 
+#ifdef __SWITCH__
+#include "platform/switch/switch_platform.h"
+#endif
+
 namespace fallout {
 
 typedef struct ProgramListNode {
@@ -3063,6 +3067,10 @@ Program* runScript(char* name)
 // 0x46E1EC
 void _updatePrograms()
 {
+#ifdef __SWITCH__
+    SwitchPerfZone perfZone(SwitchPerfZoneId::Programs);
+#endif
+
     // CE: Implementation is different. Sfall inserts global scripts into
     // program list upon creation, so engine does not diffirentiate between
     // global and normal scripts. Global scripts in CE are not part of program

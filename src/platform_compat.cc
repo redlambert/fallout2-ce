@@ -64,6 +64,10 @@ static std::string compatLowercase(std::string value)
 
 static void compatDirectoryEntryCacheClear()
 {
+#ifdef __SWITCH__
+    switchPerfCountDirectoryCacheClear();
+#endif
+
     compatDirectoryEntryCache.clear();
 }
 
@@ -73,6 +77,10 @@ static const CompatDirectoryCacheEntry* compatDirectoryEntryCacheGet(const std::
     if (existing != compatDirectoryEntryCache.end()) {
         return &(existing->second);
     }
+
+#ifdef __SWITCH__
+    unsigned long long perfStart = SDL_GetPerformanceCounter();
+#endif
 
     DIR* dir = opendir(directoryPath.c_str());
     if (dir == nullptr) {
@@ -93,6 +101,10 @@ static const CompatDirectoryCacheEntry* compatDirectoryEntryCacheGet(const std::
     }
 
     closedir(dir);
+
+#ifdef __SWITCH__
+    switchPerfRecordDirectoryScan(directoryPath.c_str(), perfStart);
+#endif
 
     return &cacheEntry;
 }
@@ -381,7 +393,7 @@ unsigned int compat_timeGetTime()
 FILE* compat_fopen(const char* path, const char* mode)
 {
 #ifdef __SWITCH__
-    switchPerfCountFileOpen();
+    unsigned long long perfStart = SDL_GetPerformanceCounter();
 #endif
 
     bool mayWrite = compatFileModeMayWrite(mode);
@@ -395,6 +407,11 @@ FILE* compat_fopen(const char* path, const char* mode)
     if (mayWrite && stream != nullptr) {
         compatDirectoryEntryCacheClear();
     }
+
+#ifdef __SWITCH__
+    switchPerfRecordFileOpen(path, perfStart, stream != nullptr);
+#endif
+
     return stream;
 }
 

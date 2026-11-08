@@ -21,6 +21,10 @@
 #include "debug.h"
 #include "platform_compat.h"
 
+#ifdef __SWITCH__
+#include "platform/switch/switch_platform.h"
+#endif
+
 namespace fallout {
 
 typedef char*(SoundFileNameMangler)(char*);
@@ -1673,6 +1677,10 @@ void soundDeleteAll()
 // 0x4AEBE0
 void soundContinueAll()
 {
+#ifdef __SWITCH__
+    SwitchPerfZone perfZone(SwitchPerfZoneId::Sound);
+#endif
+
     Sound* curr = gSoundListHead;
     while (curr != nullptr) {
         // Sound can be deallocated in `soundContinue`.

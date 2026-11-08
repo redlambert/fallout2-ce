@@ -1004,6 +1004,10 @@ int _GNW95_input_init()
 // 0x4C9CF0
 void _GNW95_process_message()
 {
+#ifdef __SWITCH__
+    SwitchPerfZone perfZone(SwitchPerfZoneId::Input);
+#endif
+
     // We need to process event loop even if program is not active or keyboard
     // is disabled, because if we ignore it, we'll never be able to reactivate
     // it again.

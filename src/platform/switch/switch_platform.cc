@@ -8,6 +8,12 @@
 #include <ctype.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
 #include <switch.h>
 
 #include <SDL.h>
@@ -447,6 +453,25 @@ void switchMouseApply(MouseData* mouseData)
 
 // MARK: Performance log
 
+static const char* const kPerfZoneNames[] = {
+    "input",
+    "window_refresh",
+    "map_render",
+    "scripts",
+    "global_scripts",
+    "programs",
+    "sound",
+};
+
+static const int kPerfZoneCount = static_cast<int>(SwitchPerfZoneId::Count);
+static const int kPerfTopFileCount = 8;
+
+typedef struct PerfFileStats {
+    int count;
+    int missing;
+    double totalMs;
+} PerfFileStats;
+
 static unsigned long long gPerfWindowStart = 0;
 static unsigned long long gPerfLastPresentEnd = 0;
 static unsigned long long gPerfProgramStart = 0;
@@ -455,11 +480,179 @@ static double gPerfFrameTotalMs = 0.0;
 static double gPerfFrameMaxMs = 0.0;
 static double gPerfPresentTotalMs = 0.0;
 static double gPerfPresentMaxMs = 0.0;
+static double gPerfZoneTotalMs[kPerfZoneCount] = {};
+static int gPerfZoneDepth[kPerfZoneCount] = {};
 static int gPerfFileOpens = 0;
+static double gPerfFileOpenTotalMs = 0.0;
+static double gPerfFileOpenMaxMs = 0.0;
+static int gPerfDirectoryScans = 0;
+static double gPerfDirectoryScanTotalMs = 0.0;
+static double gPerfDirectoryScanMaxMs = 0.0;
+static char gPerfDirectoryScanMaxPath[256] = "";
+static int gPerfDirectoryCacheClears = 0;
+static std::unordered_map<std::string, PerfFileStats> gPerfFileStats;
 
-void switchPerfCountFileOpen()
+static double perfMsSince(unsigned long long startCounter)
 {
+    unsigned long long now = SDL_GetPerformanceCounter();
+    return (now - startCounter) * 1000.0 / static_cast<double>(SDL_GetPerformanceFrequency());
+}
+
+SwitchPerfZone::SwitchPerfZone(SwitchPerfZoneId id)
+    : _id(static_cast<int>(id))
+    , _start(0)
+    , _outermost(false)
+{
+    if (!gPerfLogEnabled) {
+        return;
+    }
+
+    _outermost = gPerfZoneDepth[_id] == 0;
+    gPerfZoneDepth[_id]++;
+
+    if (_outermost) {
+        _start = SDL_GetPerformanceCounter();
+    }
+}
+
+SwitchPerfZone::~SwitchPerfZone()
+{
+    if (!gPerfLogEnabled) {
+        return;
+    }
+
+    gPerfZoneDepth[_id]--;
+
+    if (_outermost) {
+        gPerfZoneTotalMs[_id] += perfMsSince(_start);
+    }
+}
+
+void switchPerfRecordFileOpen(const char* path, unsigned long long startCounter, bool found)
+{
+    if (!gPerfLogEnabled) {
+        return;
+    }
+
+    double ms = perfMsSince(startCounter);
+
     gPerfFileOpens++;
+    gPerfFileOpenTotalMs += ms;
+    if (ms > gPerfFileOpenMaxMs) {
+        gPerfFileOpenMaxMs = ms;
+    }
+
+    PerfFileStats& stats = gPerfFileStats[path];
+    stats.count++;
+    stats.totalMs += ms;
+    if (!found) {
+        stats.missing++;
+    }
+}
+
+void switchPerfRecordDirectoryScan(const char* path, unsigned long long startCounter)
+{
+    if (!gPerfLogEnabled) {
+        return;
+    }
+
+    double ms = perfMsSince(startCounter);
+
+    gPerfDirectoryScans++;
+    gPerfDirectoryScanTotalMs += ms;
+    if (ms > gPerfDirectoryScanMaxMs) {
+        gPerfDirectoryScanMaxMs = ms;
+        snprintf(gPerfDirectoryScanMaxPath, sizeof(gPerfDirectoryScanMaxPath), "%s", path);
+    }
+}
+
+void switchPerfCountDirectoryCacheClear()
+{
+    if (!gPerfLogEnabled) {
+        return;
+    }
+
+    gPerfDirectoryCacheClears++;
+}
+
+static void perfResetWindow(unsigned long long now)
+{
+    gPerfWindowStart = now;
+    gPerfFrames = 0;
+    gPerfFrameTotalMs = 0.0;
+    gPerfFrameMaxMs = 0.0;
+    gPerfPresentTotalMs = 0.0;
+    gPerfPresentMaxMs = 0.0;
+
+    for (int index = 0; index < kPerfZoneCount; index++) {
+        gPerfZoneTotalMs[index] = 0.0;
+    }
+
+    gPerfFileOpens = 0;
+    gPerfFileOpenTotalMs = 0.0;
+    gPerfFileOpenMaxMs = 0.0;
+    gPerfDirectoryScans = 0;
+    gPerfDirectoryScanTotalMs = 0.0;
+    gPerfDirectoryScanMaxMs = 0.0;
+    gPerfDirectoryScanMaxPath[0] = '\0';
+    gPerfDirectoryCacheClears = 0;
+    gPerfFileStats.clear();
+}
+
+static void perfWriteWindow(FILE* stream, double elapsedSeconds, double windowSeconds)
+{
+    int frames = gPerfFrames > 0 ? gPerfFrames : 1;
+
+    fprintf(stream,
+        "t=%.0fs cpu_boost=%d fps=%.1f frame_avg=%.1fms frame_max=%.1fms present_avg=%.1fms present_max=%.1fms\n",
+        elapsedSeconds,
+        gCpuBoostEnabled ? 1 : 0,
+        gPerfFrames / windowSeconds,
+        gPerfFrameTotalMs / frames,
+        gPerfFrameMaxMs,
+        gPerfPresentTotalMs / frames,
+        gPerfPresentMaxMs);
+
+    fprintf(stream, "  per frame:");
+    for (int index = 0; index < kPerfZoneCount; index++) {
+        fprintf(stream, " %s=%.1fms", kPerfZoneNames[index], gPerfZoneTotalMs[index] / frames);
+    }
+    fprintf(stream, "\n");
+
+    fprintf(stream,
+        "  files: opens=%d open_total=%.0fms open_max=%.1fms dir_scans=%d dir_scan_total=%.0fms dir_scan_max=%.1fms (%s) cache_clears=%d\n",
+        gPerfFileOpens,
+        gPerfFileOpenTotalMs,
+        gPerfFileOpenMaxMs,
+        gPerfDirectoryScans,
+        gPerfDirectoryScanTotalMs,
+        gPerfDirectoryScanMaxMs,
+        gPerfDirectoryScanMaxPath,
+        gPerfDirectoryCacheClears);
+
+    if (gPerfFileStats.empty()) {
+        return;
+    }
+
+    std::vector<std::pair<std::string, PerfFileStats>> files(gPerfFileStats.begin(), gPerfFileStats.end());
+    std::sort(files.begin(), files.end(), [](const auto& a, const auto& b) {
+        return a.second.totalMs > b.second.totalMs;
+    });
+
+    int shown = 0;
+    for (const auto& file : files) {
+        if (shown >= kPerfTopFileCount) {
+            break;
+        }
+
+        fprintf(stream,
+            "  slowest file: %s count=%d missing=%d total=%.1fms\n",
+            file.first.c_str(),
+            file.second.count,
+            file.second.missing,
+            file.second.totalMs);
+        shown++;
+    }
 }
 
 void switchPerfRecordPresent(unsigned long long presentStartCounter)
@@ -473,8 +666,8 @@ void switchPerfRecordPresent(unsigned long long presentStartCounter)
 
     if (gPerfProgramStart == 0) {
         gPerfProgramStart = now;
-        gPerfWindowStart = now;
         gPerfLastPresentEnd = now;
+        perfResetWindow(now);
         return;
     }
 
@@ -500,29 +693,15 @@ void switchPerfRecordPresent(unsigned long long presentStartCounter)
     char path[512];
     snprintf(path, sizeof(path), "%sperf.log", gSwitchBaseDir);
 
+    // Plain fopen on purpose: the game's own file functions are what's
+    // being measured.
     FILE* stream = fopen(path, "at");
     if (stream != nullptr) {
-        double elapsedSeconds = (now - gPerfProgramStart) / frequency;
-        fprintf(stream,
-            "t=%.0fs cpu_boost=%d fps=%.1f frame_avg=%.1fms frame_max=%.1fms present_avg=%.1fms present_max=%.1fms file_opens=%d\n",
-            elapsedSeconds,
-            gCpuBoostEnabled ? 1 : 0,
-            gPerfFrames / windowSeconds,
-            gPerfFrameTotalMs / gPerfFrames,
-            gPerfFrameMaxMs,
-            gPerfPresentTotalMs / gPerfFrames,
-            gPerfPresentMaxMs,
-            gPerfFileOpens);
+        perfWriteWindow(stream, (now - gPerfProgramStart) / frequency, windowSeconds);
         fclose(stream);
     }
 
-    gPerfWindowStart = SDL_GetPerformanceCounter();
-    gPerfFrames = 0;
-    gPerfFrameTotalMs = 0.0;
-    gPerfFrameMaxMs = 0.0;
-    gPerfPresentTotalMs = 0.0;
-    gPerfPresentMaxMs = 0.0;
-    gPerfFileOpens = 0;
+    perfResetWindow(SDL_GetPerformanceCounter());
 }
 
 } // namespace fallout

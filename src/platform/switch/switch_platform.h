@@ -31,10 +31,36 @@ void switchInputPoll(bool textInputActive);
 // Left stick moves the cursor, ZL/ZR are left/right mouse buttons.
 void switchMouseApply(MouseData* mouseData);
 
-// Performance logging. When PERF_LOG=1 in fallout2_nx.ini, a summary line is
+// Performance logging. When PERF_LOG=1 in fallout2_nx.ini, a summary is
 // appended to perf.log in the base folder every 5 seconds.
 void switchPerfRecordPresent(unsigned long long presentStartCounter);
-void switchPerfCountFileOpen();
+void switchPerfRecordFileOpen(const char* path, unsigned long long startCounter, bool found);
+void switchPerfRecordDirectoryScan(const char* path, unsigned long long startCounter);
+void switchPerfCountDirectoryCacheClear();
+
+// Parts of the frame that get timed separately.
+enum class SwitchPerfZoneId {
+    Input,
+    WindowRefresh,
+    MapRender,
+    Scripts,
+    GlobalScripts,
+    Programs,
+    Sound,
+    Count,
+};
+
+// Times the enclosing block. Nested zones of the same kind only count once.
+class SwitchPerfZone {
+public:
+    explicit SwitchPerfZone(SwitchPerfZoneId id);
+    ~SwitchPerfZone();
+
+private:
+    int _id;
+    unsigned long long _start;
+    bool _outermost;
+};
 
 } // namespace fallout
 

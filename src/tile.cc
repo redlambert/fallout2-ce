@@ -21,6 +21,10 @@
 #include "svga.h"
 #include "tile_hires_stencil.h"
 
+#ifdef __SWITCH__
+#include "platform/switch/switch_platform.h"
+#endif
+
 namespace fallout {
 
 typedef struct RightsideUpTableEntry {
@@ -714,6 +718,10 @@ static void tileRefreshMapper(Rect* rect, MapElevation elevation)
 // 0x4B15E8 refresh_game
 static void tileRefreshGame(Rect* rect, MapElevation elevation)
 {
+#ifdef __SWITCH__
+    SwitchPerfZone perfZone(SwitchPerfZoneId::MapRender);
+#endif
+
     Rect rectToUpdate;
 
     if (rectIntersection(rect, &gTileWindowRect, &rectToUpdate) == -1) {

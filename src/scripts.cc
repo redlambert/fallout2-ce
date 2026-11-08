@@ -50,6 +50,10 @@
 #include "window_manager_private.h"
 #include "worldmap.h"
 
+#ifdef __SWITCH__
+#include "platform/switch/switch_platform.h"
+#endif
+
 namespace fallout {
 
 #define SCRIPT_LIST_EXTENT_SIZE 16
@@ -1589,6 +1593,10 @@ void _script_make_path(char* path)
 // 0x4A4810 exec_script_proc
 int scriptExecProc(int sid, ScriptProc proc)
 {
+#ifdef __SWITCH__
+    SwitchPerfZone perfZone(SwitchPerfZoneId::Scripts);
+#endif
+
     assert(proc >= SCRIPT_PROC_FIRST && proc < SCRIPT_PROC_COUNT);
 
     if (!gScriptsEnabled) {
