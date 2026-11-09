@@ -19,15 +19,19 @@
 #include <SDL.h>
 #include <GLES2/gl2.h>
 #include <malloc.h>
+#include <math.h>
 
 #include "combat.h"
 #include "config.h"
 #include "debug.h"
+#include "game.h"
 #include "game_dialog.h"
+#include "interface.h"
 #include "light.h"
 #include "map.h"
 #include "mouse.h"
 #include "scripts.h"
+#include "window_manager.h"
 
 namespace fallout {
 
@@ -344,6 +348,15 @@ static const ButtonBinding kButtonBindings[] = {
     { HidNpadButton_Left, SDL_SCANCODE_LCTRL },
 };
 
+static constexpr int kButtonBindingCount = sizeof(kButtonBindings) / sizeof(kButtonBindings[0]);
+
+// Whether each binding's key press was sent, so its release is only sent
+// when needed (a D-pad press used for menu navigation sends no key).
+static bool gBindingSent[kButtonBindingCount] = {};
+
+// Left mouse button held through A while a menu is open.
+static bool gMenuClickHeld = false;
+
 static const SDL_Scancode kArrowScancodes[] = {
     SDL_SCANCODE_UP,
     SDL_SCANCODE_DOWN,
@@ -377,12 +390,14 @@ static void pushKeyEvent(SDL_Scancode scancode, bool down)
 
 static void releaseAllKeys()
 {
-    u64 held = padGetButtons(&gKeyboardPad);
-    for (const ButtonBinding& binding : kButtonBindings) {
-        if ((held & binding.button) != 0) {
-            pushKeyEvent(binding.scancode, false);
+    for (int index = 0; index < kButtonBindingCount; index++) {
+        if (gBindingSent[index]) {
+            pushKeyEvent(kButtonBindings[index].scancode, false);
+            gBindingSent[index] = false;
         }
     }
+
+    gMenuClickHeld = false;
 
     for (int index = 0; index < 4; index++) {
         if (gArrowHeld[index]) {
@@ -478,6 +493,269 @@ static void handleRightStick()
     }
 }
 
+// MARK: Menu navigation
+
+// While a menu is open, the D-pad jumps the cursor between that menu's
+// buttons and A clicks. Menus are found through the game's window system,
+// so this covers base game screens, CE's screens and windows that mod
+// scripts (Fallout et tu, sfall) create. During normal play the D-pad keeps
+// its shortcuts.
+
+static const int kMenuTargetCapacity = 256;
+static const double kMenuRepeatDelayMs = 400.0;
+static const double kMenuRepeatIntervalMs = 120.0;
+
+static const u64 kMenuDirectionButtons[4] = {
+    HidNpadButton_Up,
+    HidNpadButton_Down,
+    HidNpadButton_Left,
+    HidNpadButton_Right,
+};
+
+static const u64 kMenuButtons = HidNpadButton_Up
+    | HidNpadButton_Down
+    | HidNpadButton_Left
+    | HidNpadButton_Right
+    | HidNpadButton_A;
+
+static Rect gMenuTargets[kMenuTargetCapacity];
+static int gMenuTargetCount = 0;
+
+static bool gMenuSnapPending = false;
+static int gMenuSnapX = 0;
+static int gMenuSnapY = 0;
+static int gMenuSnapAttempts = 0;
+
+static bool rectContains(const Rect& rect, int x, int y)
+{
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
+static bool menuButtonIsClickable(const Button* button)
+{
+    if ((button->flags & (BUTTON_FLAG_DISABLED | BUTTON_DRAG_HANDLE)) != 0) {
+        return false;
+    }
+
+    // Hover-only areas (tooltips and the like) can't be clicked.
+    return button->leftMouseDownEventCode != -1
+        || button->leftMouseUpEventCode != -1
+        || button->leftMouseDownProc != nullptr
+        || button->leftMouseUpProc != nullptr;
+}
+
+// Finds the buttons a click can reach right now, using the same rules the
+// game uses to deliver clicks: windows from the top down, stopping at the
+// first modal one. During normal play only modal windows (popups) count,
+// so HUD windows that mods keep on screen don't take over the D-pad.
+static int collectMenuTargets()
+{
+    gMenuTargetCount = 0;
+
+    bool normalPlay = !isoIsDisabled() && !gameUiIsDisabled();
+
+    int ids[64];
+    int count = windowGetClickOrder(ids, 64);
+
+    for (int index = 0; index < count; index++) {
+        Window* window = windowGetWindow(ids[index]);
+        if (window == nullptr) {
+            continue;
+        }
+
+        // The interface bar is the game HUD, never a menu.
+        if (window->id == gInterfaceBarWindow) {
+            break;
+        }
+
+        bool modal = (window->flags & WINDOW_MODAL) != 0;
+        bool hidden = (window->flags & WINDOW_HIDDEN) != 0;
+
+        if (!hidden && (!normalPlay || modal)) {
+            for (Button* button = window->buttonListHead; button != nullptr; button = button->next) {
+                if (gMenuTargetCount >= kMenuTargetCapacity) {
+                    break;
+                }
+
+                if (!menuButtonIsClickable(button)) {
+                    continue;
+                }
+
+                Rect rect = button->rect;
+                rect.left += window->rect.left;
+                rect.right += window->rect.left;
+                rect.top += window->rect.top;
+                rect.bottom += window->rect.top;
+
+                if (rect.right - rect.left < 3 || rect.bottom - rect.top < 3) {
+                    continue;
+                }
+
+                // Skip buttons whose center a button found earlier would
+                // take the click from.
+                int centerX = (rect.left + rect.right) / 2;
+                int centerY = (rect.top + rect.bottom) / 2;
+                bool covered = false;
+                for (int other = 0; other < gMenuTargetCount; other++) {
+                    if (rectContains(gMenuTargets[other], centerX, centerY)) {
+                        covered = true;
+                        break;
+                    }
+                }
+
+                if (!covered) {
+                    gMenuTargets[gMenuTargetCount++] = rect;
+                }
+            }
+        }
+
+        if (modal) {
+            break;
+        }
+    }
+
+    return gMenuTargetCount;
+}
+
+static void menuSnapTo(int x, int y)
+{
+    gMenuSnapPending = true;
+    gMenuSnapX = x;
+    gMenuSnapY = y;
+    gMenuSnapAttempts = 0;
+}
+
+// Moves the cursor to the closest button in the pressed direction
+// (0 up, 1 down, 2 left, 3 right).
+static void menuNavigate(int direction)
+{
+    int x;
+    int y;
+    if (gMenuSnapPending) {
+        x = gMenuSnapX;
+        y = gMenuSnapY;
+    } else {
+        mouseGetPosition(&x, &y);
+    }
+
+    int current = -1;
+    for (int index = 0; index < gMenuTargetCount; index++) {
+        if (rectContains(gMenuTargets[index], x, y)) {
+            current = index;
+            break;
+        }
+    }
+
+    if (current != -1) {
+        x = (gMenuTargets[current].left + gMenuTargets[current].right) / 2;
+        y = (gMenuTargets[current].top + gMenuTargets[current].bottom) / 2;
+    }
+
+    int best = -1;
+    long long bestScore = 0;
+    int nearest = -1;
+    long long nearestDistance = 0;
+
+    for (int index = 0; index < gMenuTargetCount; index++) {
+        if (index == current) {
+            continue;
+        }
+
+        const Rect& rect = gMenuTargets[index];
+        int dx = (rect.left + rect.right) / 2 - x;
+        int dy = (rect.top + rect.bottom) / 2 - y;
+
+        long long distance = static_cast<long long>(dx) * dx + static_cast<long long>(dy) * dy;
+        if (nearest == -1 || distance < nearestDistance) {
+            nearest = index;
+            nearestDistance = distance;
+        }
+
+        int primary;
+        int secondary;
+        switch (direction) {
+        case 0:
+            primary = -dy;
+            secondary = abs(dx);
+            break;
+        case 1:
+            primary = dy;
+            secondary = abs(dx);
+            break;
+        case 2:
+            primary = -dx;
+            secondary = abs(dy);
+            break;
+        default:
+            primary = dx;
+            secondary = abs(dy);
+            break;
+        }
+
+        if (primary <= 0) {
+            continue;
+        }
+
+        // Favor buttons in line with the current one over ones further off
+        // to the side.
+        long long score = primary + 2LL * secondary;
+        if (best == -1 || score < bestScore) {
+            best = index;
+            bestScore = score;
+        }
+    }
+
+    // Cursor isn't on a button and nothing lies that way: go to the
+    // closest button so the first press always lands somewhere.
+    if (best == -1 && current == -1) {
+        best = nearest;
+    }
+
+    if (best != -1) {
+        const Rect& rect = gMenuTargets[best];
+        menuSnapTo((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2);
+    }
+}
+
+static void handleMenuButtons(bool menuMode, u64 down, u64 up, u64 held)
+{
+    static int heldDirection = -1;
+    static unsigned long long heldSince = 0;
+    static unsigned long long lastRepeat = 0;
+
+    if ((up & HidNpadButton_A) != 0) {
+        gMenuClickHeld = false;
+    }
+
+    if (menuMode && (down & HidNpadButton_A) != 0) {
+        gMenuClickHeld = true;
+    }
+
+    unsigned long long now = SDL_GetPerformanceCounter();
+    double msPerCount = 1000.0 / static_cast<double>(SDL_GetPerformanceFrequency());
+
+    if (menuMode) {
+        for (int direction = 0; direction < 4; direction++) {
+            if ((down & kMenuDirectionButtons[direction]) != 0) {
+                menuNavigate(direction);
+                heldDirection = direction;
+                heldSince = now;
+                lastRepeat = now;
+            }
+        }
+    }
+
+    if (heldDirection != -1) {
+        if (!menuMode || (held & kMenuDirectionButtons[heldDirection]) == 0) {
+            heldDirection = -1;
+        } else if ((now - heldSince) * msPerCount >= kMenuRepeatDelayMs
+            && (now - lastRepeat) * msPerCount >= kMenuRepeatIntervalMs) {
+            menuNavigate(heldDirection);
+            lastRepeat = now;
+        }
+    }
+}
+
 void switchInputInit()
 {
     if (gSwitchInputInitialized) {
@@ -534,15 +812,30 @@ void switchInputPoll(bool textInputActive)
     u64 up = padGetButtonsUp(&gKeyboardPad);
     u64 held = padGetButtons(&gKeyboardPad);
 
-    for (const ButtonBinding& binding : kButtonBindings) {
-        if ((down & binding.button) != 0) {
-            pushKeyEvent(binding.scancode, true);
+    bool menuMode = collectMenuTargets() > 0;
+
+    for (int index = 0; index < kButtonBindingCount; index++) {
+        const ButtonBinding& binding = kButtonBindings[index];
+
+        // Released first, so a press and release in the same poll still
+        // pair up.
+        if ((up & binding.button) != 0 && gBindingSent[index]) {
+            pushKeyEvent(binding.scancode, false);
+            gBindingSent[index] = false;
         }
 
-        if ((up & binding.button) != 0) {
-            pushKeyEvent(binding.scancode, false);
+        if ((down & binding.button) != 0) {
+            if (menuMode && (binding.button & kMenuButtons) != 0) {
+                // Used for menu navigation instead.
+                continue;
+            }
+
+            pushKeyEvent(binding.scancode, true);
+            gBindingSent[index] = true;
         }
     }
+
+    handleMenuButtons(menuMode, down, up, held);
 
     // Hold R to move the cursor faster.
     gCursorSpeedup = (held & HidNpadButton_R) != 0 ? 2.0 : 1.0;
@@ -572,8 +865,35 @@ void switchMouseApply(MouseData* mouseData)
         : 1000.0 / 60.0;
     lastPollCounter = now;
 
+    // Menu navigation: move the cursor onto the chosen button. The engine
+    // multiplies movement by mouse sensitivity, so divide it out here and
+    // correct any rounding on the next poll.
+    if (gMenuSnapPending) {
+        int cursorX;
+        int cursorY;
+        mouseGetPosition(&cursorX, &cursorY);
+
+        int dx = gMenuSnapX - cursorX;
+        int dy = gMenuSnapY - cursorY;
+        if ((abs(dx) <= 1 && abs(dy) <= 1) || gMenuSnapAttempts >= 4) {
+            gMenuSnapPending = false;
+        } else {
+            double sensitivity = mouseGetSensitivity();
+            if (sensitivity <= 0.0) {
+                sensitivity = 1.0;
+            }
+
+            mouseData->x += static_cast<int>(lround(dx / sensitivity));
+            mouseData->y += static_cast<int>(lround(dy / sensitivity));
+            gMenuSnapAttempts++;
+        }
+    }
+
     HidAnalogStickState stick = padGetStickPos(&gMousePad, 0);
-    if (abs(stick.x) > kLeftStickDeadZone || abs(stick.y) > kLeftStickDeadZone) {
+    if (gMenuSnapPending) {
+        remainderX = 0.0;
+        remainderY = 0.0;
+    } else if (abs(stick.x) > kLeftStickDeadZone || abs(stick.y) > kLeftStickDeadZone) {
         // Roughly the same curve as the previous Switch release. The engine
         // applies mouse sensitivity again afterwards, same as before.
         double sensitivity = mouseGetSensitivity();
@@ -607,6 +927,11 @@ void switchMouseApply(MouseData* mouseData)
 
     u64 held = padGetButtons(&gMousePad);
     mouseData->buttons[0] |= (held & HidNpadButton_ZL) != 0;
+
+    // A clicks in menus, once the cursor has reached its button.
+    if (gMenuClickHeld && !gMenuSnapPending) {
+        mouseData->buttons[0] = 1;
+    }
     mouseData->buttons[1] |= (held & HidNpadButton_ZR) != 0;
 }
 

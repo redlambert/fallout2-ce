@@ -1198,6 +1198,22 @@ int windowGetAtPoint(int x, int y)
     return -1;
 }
 
+#ifdef __SWITCH__
+int windowGetClickOrder(int* ids, int capacity)
+{
+    int count = 0;
+
+    // Same walk as _win_check_all_buttons: topmost first, window 0 (the
+    // screen) excluded. Hidden windows are included because the game's walk
+    // still stops at a hidden modal window.
+    for (int index = gWindowsLength - 1; index >= 1 && count < capacity; index--) {
+        ids[count++] = gWindows[index]->id;
+    }
+
+    return count;
+}
+#endif
+
 // 0x4D7918
 int windowGetWidth(int win)
 {

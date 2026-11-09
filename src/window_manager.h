@@ -281,6 +281,11 @@ Window* windowGetWindow(int win);
 unsigned char* windowGetBuffer(int win);
 Buffer2D windowGetBuffer2D(int win);
 int windowGetAtPoint(int x, int y);
+#ifdef __SWITCH__
+// Fills ids with all windows from topmost down, the order the game uses to
+// deliver clicks. Returns how many were written.
+int windowGetClickOrder(int* ids, int capacity);
+#endif
 int windowGetWidth(int win);
 int windowGetHeight(int win);
 int windowGetRect(int win, Rect* rect);
