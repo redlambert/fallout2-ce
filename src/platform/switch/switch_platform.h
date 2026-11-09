@@ -23,6 +23,14 @@ const char* switchGetBaseDir();
 // fallout2_nx.ini, on by default).
 bool switchWantsVsync();
 
+// Ways of handing frames to the graphics driver, set in fallout2_nx.ini:
+// RENDER_TEXTURES (1 or 2), RENDER_UPLOAD (0 = update, 1 = lock),
+// RENDER_BATCHING (1 or 0), RENDER_RESET_SECONDS (0 = off).
+int switchRenderTextureCount();
+bool switchRenderUsesLock();
+bool switchRenderBatching();
+int switchRenderResetSeconds();
+
 // Replaces screen settings with values that suit the Switch display.
 // Defaults can be changed in `fallout2_nx.ini` in the base folder.
 void switchApplyScreenOverrides(int* width, int* height, int* scale, WindowMode* mode);

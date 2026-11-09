@@ -394,6 +394,15 @@ bool screenIsExclusiveFullscreen()
     return (flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN;
 }
 
+#ifdef __SWITCH__
+// Optional second screen texture. When RENDER_TEXTURES=2, frames alternate
+// between the two so a new upload never targets the texture the graphics
+// chip may still be drawing from.
+static SDL_Texture* gSdlTextures[2] = { nullptr, nullptr };
+static int gSdlTextureIndex = 0;
+static unsigned long long gLastRendererResetCounter = 0;
+#endif
+
 static bool createRenderer(int width, int height)
 {
     Uint32 rendererFlags = 0;
@@ -403,6 +412,10 @@ static bool createRenderer(int width, int height)
     if (switchWantsVsync()) {
         rendererFlags |= SDL_RENDERER_PRESENTVSYNC;
     }
+
+    // RENDER_BATCHING=0 makes SDL send each draw call straight to the driver
+    // instead of collecting them per frame.
+    SDL_SetHint(SDL_HINT_RENDER_BATCHING, switchRenderBatching() ? "1" : "0");
 #endif
 
     gSdlRenderer = SDL_CreateRenderer(gSdlWindow, -1, rendererFlags);
@@ -418,6 +431,18 @@ static bool createRenderer(int width, int height)
     if (gSdlTexture == nullptr) {
         return false;
     }
+
+#ifdef __SWITCH__
+    gSdlTextures[0] = gSdlTexture;
+    gSdlTextures[1] = nullptr;
+    gSdlTextureIndex = 0;
+
+    if (switchRenderTextureCount() >= 2) {
+        gSdlTextures[1] = SDL_CreateTexture(gSdlRenderer, SDL_PIXELFORMAT_RGB888, SDL_TEXTUREACCESS_STREAMING, width, height);
+    }
+
+    gLastRendererResetCounter = SDL_GetPerformanceCounter();
+#endif
 
     Uint32 format;
     if (SDL_QueryTexture(gSdlTexture, &format, nullptr, nullptr, nullptr) != 0) {
@@ -439,10 +464,21 @@ static void destroyRenderer()
         gSdlTextureSurface = nullptr;
     }
 
+#ifdef __SWITCH__
+    // gSdlTexture points at one of these two.
+    for (int index = 0; index < 2; index++) {
+        if (gSdlTextures[index] != nullptr) {
+            SDL_DestroyTexture(gSdlTextures[index]);
+            gSdlTextures[index] = nullptr;
+        }
+    }
+    gSdlTexture = nullptr;
+#else
     if (gSdlTexture != nullptr) {
         SDL_DestroyTexture(gSdlTexture);
         gSdlTexture = nullptr;
     }
+#endif
 
     if (gSdlRenderer != nullptr) {
         SDL_DestroyRenderer(gSdlRenderer);
@@ -538,7 +574,38 @@ void renderPresent()
 #endif
 
 #ifdef __SWITCH__
-    int updateResult = SDL_UpdateTexture(gSdlTexture, nullptr, gSdlTextureSurface->pixels, gSdlTextureSurface->pitch);
+    // RENDER_RESET_SECONDS: rebuild the renderer on a timer, to test whether
+    // the graphics driver's state wears down over time.
+    int resetSeconds = switchRenderResetSeconds();
+    if (resetSeconds > 0
+        && SDL_GetPerformanceCounter() - gLastRendererResetCounter >= static_cast<unsigned long long>(resetSeconds) * SDL_GetPerformanceFrequency()) {
+        handleWindowSizeChanged();
+    }
+
+    if (gSdlTextures[1] != nullptr) {
+        gSdlTextureIndex = 1 - gSdlTextureIndex;
+        gSdlTexture = gSdlTextures[gSdlTextureIndex];
+    }
+
+    int updateResult = 0;
+    if (switchRenderUsesLock()) {
+        // RENDER_UPLOAD=1: copy into the texture's own buffer instead of
+        // asking SDL to upload from ours.
+        void* texturePixels;
+        int texturePitch;
+        updateResult = SDL_LockTexture(gSdlTexture, nullptr, &texturePixels, &texturePitch);
+        if (updateResult == 0) {
+            unsigned char* dest = static_cast<unsigned char*>(texturePixels);
+            unsigned char* src = static_cast<unsigned char*>(gSdlTextureSurface->pixels);
+            int rowBytes = gSdlTextureSurface->w * gSdlTextureSurface->format->BytesPerPixel;
+            for (int y = 0; y < gSdlTextureSurface->h; y++) {
+                memcpy(dest + y * texturePitch, src + y * gSdlTextureSurface->pitch, rowBytes);
+            }
+            SDL_UnlockTexture(gSdlTexture);
+        }
+    } else {
+        updateResult = SDL_UpdateTexture(gSdlTexture, nullptr, gSdlTextureSurface->pixels, gSdlTextureSurface->pitch);
+    }
     if (updateResult != 0) {
         switchPerfRecordRenderError("update_texture", SDL_GetError());
     }

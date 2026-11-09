@@ -69,6 +69,10 @@ static bool gCpuBoostEnabled = true;
 static int gCpuBoostMode = 1;
 static bool gPerfLogEnabled = true;
 static bool gVsyncEnabled = true;
+static int gRenderTextureCount = 1;
+static bool gRenderUsesLock = false;
+static bool gRenderBatching = true;
+static int gRenderResetSeconds = 0;
 
 static bool fileExists(const char* dir, const char* name)
 {
@@ -224,6 +228,10 @@ void switchPlatformInit(int argc, char** argv)
     gCpuBoostEnabled = gCpuBoostMode == 1;
     gPerfLogEnabled = readIniInt(configPath, "PERF_LOG", 1) == 1;
     gVsyncEnabled = readIniInt(configPath, "VSYNC", 1) == 1;
+    gRenderTextureCount = readIniInt(configPath, "RENDER_TEXTURES", 1) == 2 ? 2 : 1;
+    gRenderUsesLock = readIniInt(configPath, "RENDER_UPLOAD", 0) == 1;
+    gRenderBatching = readIniInt(configPath, "RENDER_BATCHING", 1) == 1;
+    gRenderResetSeconds = readIniInt(configPath, "RENDER_RESET_SECONDS", 0);
 
     if (gCpuBoostEnabled) {
         // Raises the CPU from 1020 MHz to 1785 MHz while the game runs.
@@ -249,6 +257,26 @@ const char* switchGetBaseDir()
 bool switchWantsVsync()
 {
     return gVsyncEnabled;
+}
+
+int switchRenderTextureCount()
+{
+    return gRenderTextureCount;
+}
+
+bool switchRenderUsesLock()
+{
+    return gRenderUsesLock;
+}
+
+bool switchRenderBatching()
+{
+    return gRenderBatching;
+}
+
+int switchRenderResetSeconds()
+{
+    return gRenderResetSeconds;
 }
 
 void switchApplyScreenOverrides(int* width, int* height, int* scale, WindowMode* mode)
@@ -808,10 +836,14 @@ static void perfWriteWindow(FILE* stream, double elapsedSeconds, double windowSe
     int frames = gPerfFrames > 0 ? gPerfFrames : 1;
 
     fprintf(stream,
-        "t=%.0fs cpu_boost=%d vsync=%d fps=%.1f frame_avg=%.1fms frame_max=%.1fms present_avg=%.1fms present_max=%.1fms\n",
+        "t=%.0fs cpu_boost=%d vsync=%d render=%d/%d/%d/%d fps=%.1f frame_avg=%.1fms frame_max=%.1fms present_avg=%.1fms present_max=%.1fms\n",
         elapsedSeconds,
         gCpuBoostEnabled ? gCpuBoostMode : 0,
         gVsyncEnabled ? 1 : 0,
+        gRenderTextureCount,
+        gRenderUsesLock ? 1 : 0,
+        gRenderBatching ? 1 : 0,
+        gRenderResetSeconds,
         gPerfFrames / windowSeconds,
         gPerfFrameTotalMs / frames,
         gPerfFrameMaxMs,
