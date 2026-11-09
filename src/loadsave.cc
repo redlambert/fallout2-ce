@@ -65,6 +65,10 @@
 #include "window_manager.h"
 #include "word_wrap.h"
 #include "worldmap.h"
+
+#ifdef __SWITCH__
+#include "platform/switch/switch_menu_points.h"
+#endif
 #if defined(__EMSCRIPTEN__)
 #include <emscripten.h>
 #endif
@@ -3418,5 +3422,38 @@ static int _EraseSave()
 
     return 0;
 }
+
+#ifdef __SWITCH__
+int loadSaveGetMenuPoints(int window, const Button* button, SwitchMenuPoint* points, int capacity)
+{
+    // The slot list: one button for all ten rows on the page.
+    const Rect& rect = button->rect;
+    if (window != gLoadSaveWindow
+        || button->leftMouseUpEventCode != 502
+        || rect.right - rect.left + 1 != 230
+        || rect.bottom - rect.top + 1 != 348) {
+        return -1;
+    }
+
+    // Same row math the screen uses to turn a click into a slot.
+    int oldFont = fontGetCurrent();
+    fontSetCurrent(101);
+    int rowHeight = 3 * fontGetLineHeight() + 4;
+    fontSetCurrent(oldFont);
+
+    int x = (rect.left + rect.right) / 2;
+    int count = 0;
+    for (int row = 0; row < 10 && count < capacity; row++) {
+        int y = 79 + row * rowHeight + rowHeight / 2;
+        if (y >= rect.top && y <= rect.bottom) {
+            points[count].x = x;
+            points[count].y = y;
+            count++;
+        }
+    }
+
+    return count;
+}
+#endif
 
 } // namespace fallout

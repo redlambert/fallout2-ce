@@ -1,6 +1,7 @@
 #ifdef __SWITCH__
 
 #include "platform/switch/switch_platform.h"
+#include "platform/switch/switch_menu_points.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -501,7 +502,7 @@ static void handleRightStick()
 // scripts (Fallout et tu, sfall) create. During normal play the D-pad keeps
 // its shortcuts.
 
-static const int kMenuTargetCapacity = 256;
+static const int kMenuTargetCapacity = 384;
 static const double kMenuRepeatDelayMs = 400.0;
 static const double kMenuRepeatIntervalMs = 120.0;
 
@@ -542,6 +543,53 @@ static bool menuButtonIsClickable(const Button* button)
         || button->leftMouseUpEventCode != -1
         || button->leftMouseDownProc != nullptr
         || button->leftMouseUpProc != nullptr;
+}
+
+// Adds a target unless a button found earlier would take its click.
+static void addMenuTarget(const Rect& rect)
+{
+    if (gMenuTargetCount >= kMenuTargetCapacity) {
+        return;
+    }
+
+    int centerX = (rect.left + rect.right) / 2;
+    int centerY = (rect.top + rect.bottom) / 2;
+    for (int other = 0; other < gMenuTargetCount; other++) {
+        if (rectContains(gMenuTargets[other], centerX, centerY)) {
+            return;
+        }
+    }
+
+    gMenuTargets[gMenuTargetCount++] = rect;
+}
+
+// Screens that use one big button for a list or control report the spots
+// inside it worth jumping to (see switch_menu_points.h). Returns false when
+// the button is an ordinary one.
+static bool addButtonPoints(Window* window, const Button* button)
+{
+    SwitchMenuPoint points[32];
+    int count = loadSaveGetMenuPoints(window->id, button, points, 32);
+    if (count == -1) {
+        count = characterEditorGetMenuPoints(window->id, button, points, 32);
+    }
+    if (count == -1) {
+        count = preferencesGetMenuPoints(window->id, button, points, 32);
+    }
+    if (count == -1) {
+        return false;
+    }
+
+    for (int index = 0; index < count; index++) {
+        Rect rect;
+        rect.left = window->rect.left + points[index].x - 2;
+        rect.top = window->rect.top + points[index].y - 2;
+        rect.right = window->rect.left + points[index].x + 2;
+        rect.bottom = window->rect.top + points[index].y + 2;
+        addMenuTarget(rect);
+    }
+
+    return true;
 }
 
 // Finds the buttons a click can reach right now, using the same rules the
@@ -591,21 +639,11 @@ static int collectMenuTargets()
                     continue;
                 }
 
-                // Skip buttons whose center a button found earlier would
-                // take the click from.
-                int centerX = (rect.left + rect.right) / 2;
-                int centerY = (rect.top + rect.bottom) / 2;
-                bool covered = false;
-                for (int other = 0; other < gMenuTargetCount; other++) {
-                    if (rectContains(gMenuTargets[other], centerX, centerY)) {
-                        covered = true;
-                        break;
-                    }
+                if (addButtonPoints(window, button)) {
+                    continue;
                 }
 
-                if (!covered) {
-                    gMenuTargets[gMenuTargetCount++] = rect;
-                }
+                addMenuTarget(rect);
             }
         }
 

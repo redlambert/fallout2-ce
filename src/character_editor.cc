@@ -51,6 +51,10 @@
 #include "word_wrap.h"
 #include "worldmap.h"
 
+#ifdef __SWITCH__
+#include "platform/switch/switch_menu_points.h"
+#endif
+
 namespace fallout {
 
 #define EDITOR_WINDOW_WIDTH 640
@@ -776,6 +780,11 @@ static bool gCharacterEditorCardDrawn;
 
 // 0x5707DC crow
 static int gPerkDialogTopLine;
+
+#ifdef __SWITCH__
+// Number of perks in the open perk list, for D-pad navigation.
+static int gSwitchPerkDialogCount = 0;
+#endif
 
 // 0x5707E0 frstc_draw2
 static bool gPerkDialogCardDrawn;
@@ -6134,6 +6143,10 @@ static int perkDialogShow()
 // 0x43CACC
 static int perkDialogHandleInput(int count, void (*refreshProc)())
 {
+#ifdef __SWITCH__
+    gSwitchPerkDialogCount = count;
+#endif
+
     fontSetCurrent(101);
 
     int v3 = count - 11;
@@ -7559,5 +7572,112 @@ static void customTownReputationFree()
 {
     gCustomTownReputationEntries.clear();
 }
+
+#ifdef __SWITCH__
+// The info areas on the character screen and the perk picker list are big
+// buttons that work out the line from the cursor position. These points
+// follow the same math as characterEditorHandleInfoButtonPressed and
+// perkDialogHandleInput.
+int characterEditorGetMenuPoints(int window, const Button* button, SwitchMenuPoint* points, int capacity)
+{
+    const Rect& rect = button->rect;
+    int centerX = (rect.left + rect.right) / 2;
+    int count = 0;
+
+    auto add = [&](int x, int y) {
+        if (count < capacity && y >= rect.top && y <= rect.bottom) {
+            points[count].x = x;
+            points[count].y = y;
+            count++;
+        }
+    };
+
+    int oldFont = fontGetCurrent();
+    fontSetCurrent(101);
+    int lineHeight = fontGetLineHeight();
+    fontSetCurrent(oldFont);
+
+    if (window == gPerkDialogWindow
+        && button->leftMouseUpEventCode == 501
+        && rect.left == PERK_WINDOW_LIST_X
+        && rect.top == PERK_WINDOW_LIST_Y) {
+        int rowHeight = lineHeight + 2;
+        int visible = std::min(std::max(gSwitchPerkDialogCount - gPerkDialogTopLine, 0), 11);
+        for (int row = 0; row < visible; row++) {
+            add(centerX, PERK_WINDOW_LIST_Y + row * rowHeight + rowHeight / 2);
+        }
+        return count;
+    }
+
+    if (window != gCharacterEditorWindow) {
+        return -1;
+    }
+
+    switch (button->leftMouseDownEventCode) {
+    case 525:
+        // SPECIAL stats.
+        for (int index = 0; index < 7; index++) {
+            add(centerX, gCharacterEditorPrimaryStatY[index] + 11);
+        }
+        return count;
+    case 526:
+        if (gCharacterEditorIsCreationMode) {
+            return -1;
+        }
+
+        // Level, experience, next level.
+        for (int row = 0; row < 3; row++) {
+            add(centerX, 280 + row * 10 + 5);
+        }
+        return count;
+    case 527: {
+        if (gCharacterEditorIsCreationMode) {
+            return -1;
+        }
+
+        // Perks, karma or kills list, only the lines shown.
+        int rowHeight = lineHeight + 1;
+        int visible = std::min(gCharacterEditorFolderViewCurrentLine - gCharacterEditorFolderViewTopLine, gCharacterEditorFolderViewMaxLines);
+        for (int row = 0; row < visible; row++) {
+            add(centerX, 364 + row * rowHeight + rowHeight / 2);
+        }
+        return count;
+    }
+    case 528:
+        // Hit points and conditions.
+        for (int row = 0; row < 8; row++) {
+            add(centerX, 41 + row * 13 + 6);
+        }
+        return count;
+    case 529:
+        // Derived stats.
+        for (int row = 0; row < 10; row++) {
+            add(centerX, 175 + row * 13 + 6);
+        }
+        return count;
+    case 531:
+        // Skills. A click picks skill (y - 27) * 0.092307694.
+        for (int skill = 0; skill < SKILL_COUNT; skill++) {
+            add(centerX, 27 + static_cast<int>((skill + 0.5) / 0.092307694));
+        }
+        return count;
+    case 534: {
+        // Traits at character creation: two columns of eight, the right
+        // column starting at x 169.
+        double step = lineHeight + 3 + 0.56;
+        for (int column = 0; column < 2; column++) {
+            int x = column == 0 ? (rect.left + 168) / 2 : (169 + rect.right) / 2;
+            for (int row = 0; row < 8; row++) {
+                int y = static_cast<int>(353.0 + row * step) + lineHeight / 2;
+                add(x, std::min(y, rect.bottom - 1));
+            }
+        }
+        return count;
+    }
+    }
+
+    return -1;
+}
+#endif
 
 } // namespace fallout
