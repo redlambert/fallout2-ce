@@ -18,9 +18,13 @@
 
 #include <SDL.h>
 
+#include "combat.h"
 #include "config.h"
 #include "debug.h"
+#include "light.h"
+#include "map.h"
 #include "mouse.h"
+#include "scripts.h"
 
 namespace fallout {
 
@@ -571,6 +575,13 @@ static double gPerfChangeGapMaxMs = 0.0;
 static int gPerfChangeGapsOver50Ms = 0;
 static int gPerfChangeGapsOver100Ms = 0;
 
+// Palette changes per window.
+static int gPerfPaletteChanges = 0;
+static double gPerfPaletteTotalMs = 0.0;
+
+// Which lines of code presented frames, per window.
+static std::unordered_map<std::string, int> gPerfPresentSources;
+
 // How many times each timed part of the game ran, per window.
 static int gPerfZoneCalls[static_cast<int>(SwitchPerfZoneId::Count)] = {};
 static std::unordered_map<std::string, PerfFileStats> gPerfFileStats;
@@ -684,6 +695,30 @@ void switchPerfCountWindowEvent(int windowEvent)
     }
 }
 
+void switchPerfRecordPresentSource(const char* file, int line)
+{
+    if (!gPerfLogEnabled) {
+        return;
+    }
+
+    const char* name = strrchr(file, '/');
+    name = name != nullptr ? name + 1 : file;
+
+    char key[128];
+    snprintf(key, sizeof(key), "%s:%d", name, line);
+    gPerfPresentSources[key]++;
+}
+
+void switchPerfRecordPaletteChange(unsigned long long startCounter)
+{
+    if (!gPerfLogEnabled) {
+        return;
+    }
+
+    gPerfPaletteChanges++;
+    gPerfPaletteTotalMs += perfMsSince(startCounter);
+}
+
 void switchPerfMarkScreenUpdate()
 {
     gPerfScreenUpdatedThisFrame = true;
@@ -721,6 +756,9 @@ static void perfResetWindow(unsigned long long now)
         gPerfZoneCalls[index] = 0;
     }
 
+    gPerfPresentSources.clear();
+    gPerfPaletteChanges = 0;
+    gPerfPaletteTotalMs = 0.0;
     gPerfChangedFrames = 0;
     gPerfChangeGapMaxMs = 0.0;
     gPerfChangeGapsOver50Ms = 0;
@@ -778,6 +816,36 @@ static void perfWriteWindow(FILE* stream, double elapsedSeconds, double windowSe
         gPerfChangeGapMaxMs,
         gPerfChangeGapsOver50Ms,
         gPerfChangeGapsOver100Ms);
+
+    if (!gPerfPresentSources.empty()) {
+        std::vector<std::pair<std::string, int>> sources(gPerfPresentSources.begin(), gPerfPresentSources.end());
+        std::sort(sources.begin(), sources.end(), [](const auto& a, const auto& b) {
+            return a.second > b.second;
+        });
+
+        fprintf(stream, "  frames presented by:");
+        int shown = 0;
+        for (const auto& source : sources) {
+            if (shown >= 6) {
+                break;
+            }
+            fprintf(stream, " %s=%d", source.first.c_str(), source.second);
+            shown++;
+        }
+        fprintf(stream, "\n");
+    }
+
+    char mapName[17];
+    snprintf(mapName, sizeof(mapName), "%s", gMapHeader.name);
+
+    fprintf(stream,
+        "  game: map=%s hour=%d light=%d combat=%d palette_changes=%d palette_total=%.1fms\n",
+        mapName,
+        gameTimeGetHour(),
+        lightGetAmbientIntensity(),
+        isInCombat() ? 1 : 0,
+        gPerfPaletteChanges,
+        gPerfPaletteTotalMs);
 
     fprintf(stream,
         "  animation slots: sequences_busy=%d/64 moves_busy=%d/64\n",

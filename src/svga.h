@@ -52,6 +52,12 @@ int screenGetVisibleHeight();
 void handleWindowSizeChanged();
 void renderFpsCounter();
 void renderPresent();
+
+#ifdef __SWITCH__
+// Switch performance log: records which line of code presented each frame.
+void renderPresentTagged(const char* file, int line);
+#define renderPresent() renderPresentTagged(__FILE__, __LINE__)
+#endif
 bool screenIsExclusiveFullscreen();
 
 } // namespace fallout

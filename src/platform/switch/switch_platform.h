@@ -49,6 +49,13 @@ void switchPerfCountRendererRebuild();
 // where the picture changed from frames that only repeat the last one.
 void switchPerfMarkScreenUpdate();
 
+// Records which line of code asked for a frame to be presented.
+void switchPerfRecordPresentSource(const char* file, int line);
+
+// Counts palette changes (lighting, color cycling), each of which redraws
+// the whole screen.
+void switchPerfRecordPaletteChange(unsigned long long startCounter);
+
 // Parts of the frame that get timed separately.
 enum class SwitchPerfZoneId {
     Input,

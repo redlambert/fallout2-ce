@@ -254,6 +254,10 @@ void directDrawFree()
 void directDrawSetPaletteInRange(unsigned char* palette, int start, int count)
 {
     if (gSdlSurface != nullptr && gSdlSurface->format->palette != nullptr) {
+#ifdef __SWITCH__
+        unsigned long long paletteStart = SDL_GetPerformanceCounter();
+#endif
+
         SDL_Color colors[256];
 
         if (count != 0) {
@@ -267,6 +271,10 @@ void directDrawSetPaletteInRange(unsigned char* palette, int start, int count)
 
         SDL_SetPaletteColors(gSdlSurface->format->palette, colors, start, count);
         SDL_BlitSurface(gSdlSurface, nullptr, gSdlTextureSurface, nullptr);
+
+#ifdef __SWITCH__
+        switchPerfRecordPaletteChange(paletteStart);
+#endif
     }
 }
 
@@ -274,6 +282,10 @@ void directDrawSetPaletteInRange(unsigned char* palette, int start, int count)
 void directDrawSetPalette(unsigned char* palette)
 {
     if (gSdlSurface != nullptr && gSdlSurface->format->palette != nullptr) {
+#ifdef __SWITCH__
+        unsigned long long paletteStart = SDL_GetPerformanceCounter();
+#endif
+
         SDL_Color colors[256];
 
         for (int index = 0; index < 256; index++) {
@@ -285,6 +297,10 @@ void directDrawSetPalette(unsigned char* palette)
 
         SDL_SetPaletteColors(gSdlSurface->format->palette, colors, 0, 256);
         SDL_BlitSurface(gSdlSurface, nullptr, gSdlTextureSurface, nullptr);
+
+#ifdef __SWITCH__
+        switchPerfRecordPaletteChange(paletteStart);
+#endif
     }
 }
 
@@ -504,6 +520,16 @@ void renderFpsCounter()
     rect.h = height;
     SDL_BlitSurface(gSdlSurface, &rect, gSdlTextureSurface, &rect);
 }
+
+#ifdef __SWITCH__
+#undef renderPresent
+
+void renderPresentTagged(const char* file, int line)
+{
+    switchPerfRecordPresentSource(file, line);
+    renderPresent();
+}
+#endif
 
 void renderPresent()
 {
