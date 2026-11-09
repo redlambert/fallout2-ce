@@ -625,6 +625,8 @@ void renderPresent()
     SDL_RenderPresent(gSdlRenderer);
 
 #ifdef __SWITCH__
+    switchPerfCheckGlErrors();
+
     // Fingerprint of the finished picture, to count frames whose image
     // actually differs from the previous one.
     switchPerfRecordPictureHash(gSdlTextureSurface->pixels, gSdlTextureSurface->pitch, gSdlTextureSurface->h);

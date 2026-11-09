@@ -69,6 +69,7 @@ void switchPerfRecordRenderError(const char* step, const char* error);
 
 // Hashes the finished frame to count frames whose picture really changed.
 void switchPerfRecordPictureHash(const void* pixels, int pitch, int height);
+void switchPerfCheckGlErrors();
 
 // Parts of the frame that get timed separately.
 enum class SwitchPerfZoneId {

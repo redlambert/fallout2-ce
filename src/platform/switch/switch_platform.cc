@@ -17,6 +17,8 @@
 #include <switch.h>
 
 #include <SDL.h>
+#include <GLES2/gl2.h>
+#include <malloc.h>
 
 #include "combat.h"
 #include "config.h"
@@ -768,6 +770,27 @@ void switchPerfRecordRenderError(const char* step, const char* error)
     snprintf(gPerfRenderLastError, sizeof(gPerfRenderLastError), "%s: %s", step, error != nullptr ? error : "");
 }
 
+static int gPerfGlErrors = 0;
+static unsigned int gPerfGlLastError = 0;
+
+void switchPerfCheckGlErrors()
+{
+    if (!gPerfLogEnabled) {
+        return;
+    }
+
+    // SDL never asks the graphics driver whether an upload or draw really
+    // worked, so ask it here. 0x505 means the driver ran out of memory.
+    for (int i = 0; i < 8; i++) {
+        GLenum error = glGetError();
+        if (error == GL_NO_ERROR) {
+            break;
+        }
+        gPerfGlErrors++;
+        gPerfGlLastError = error;
+    }
+}
+
 void switchPerfRecordPictureHash(const void* pixels, int pitch, int height)
 {
     if (!gPerfLogEnabled || pixels == nullptr) {
@@ -841,6 +864,7 @@ static void perfResetWindow(unsigned long long now)
     gPerfPaletteChanges = 0;
     gPerfPaletteTotalMs = 0.0;
     gPerfRenderErrors = 0;
+    gPerfGlErrors = 0;
     gPerfRenderLastError[0] = '\0';
     gPerfCursorMovedFrames = 0;
     gPerfPictureChangedFrames = 0;
@@ -983,6 +1007,25 @@ static void perfWriteWindow(FILE* stream, double elapsedSeconds, double windowSe
         gPerfFileOpenErrors,
         gPerfFileOpenLastError,
         gPerfFileOpenLastErrorPath);
+
+    // Memory: how much this app may use, how much it uses, and how much of
+    // the game's own heap is taken.
+    u64 memoryTotal = 0;
+    u64 memoryUsed = 0;
+    svcGetInfo(&memoryTotal, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0);
+    svcGetInfo(&memoryUsed, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0);
+    struct mallinfo heapInfo = mallinfo();
+    AppletType appletType = appletGetAppletType();
+
+    fprintf(stream,
+        "  memory: launch=%s total=%lluMB used=%lluMB heap_in_use=%lluMB heap_reserved=%lluMB graphics_errors=%d last_graphics_error=0x%x\n",
+        appletType == AppletType_Application || appletType == AppletType_SystemApplication ? "game_override" : "applet_album",
+        static_cast<unsigned long long>(memoryTotal / (1024 * 1024)),
+        static_cast<unsigned long long>(memoryUsed / (1024 * 1024)),
+        static_cast<unsigned long long>(heapInfo.uordblks) / (1024 * 1024),
+        static_cast<unsigned long long>(heapInfo.arena) / (1024 * 1024),
+        gPerfGlErrors,
+        gPerfGlLastError);
 
     int windowWidth = 0;
     int windowHeight = 0;
