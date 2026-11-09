@@ -1758,10 +1758,26 @@ bool FrmId::exist(int fid, char* path)
     if (fid > kEmptyFid) {
         const char* filePath = buildPath(fid, path);
         if (filePath != nullptr) {
+#ifdef __SWITCH__
+            // Art files don't change while the game runs, so remember each
+            // answer. Without this, moving the cursor re-checked blank.frm
+            // every frame, and each check is a request to the Switch file
+            // system service, which shares a CPU core with the display.
+            static std::unordered_map<std::string, bool> existCache;
+            auto cached = existCache.find(filePath);
+            if (cached != existCache.end()) {
+                return cached->second;
+            }
+#endif
+
             int fileSize;
             if (dbGetFileSize(filePath, &fileSize) != -1) {
                 result = true;
             }
+
+#ifdef __SWITCH__
+            existCache.emplace(filePath, result);
+#endif
         }
     }
 
