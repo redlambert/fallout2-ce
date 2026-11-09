@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - main
       - switch
     tags:
       - "switch-*"
@@ -79,6 +80,8 @@ jobs:
           cp ce-dat/ce.dat package/switch/fallout2/
           cp os/switch/fallout2_nx.ini package/switch/fallout2/
           cp os/switch/README.md package/README-SWITCH.md
+          mkdir -p package/debug
+          cp build/fallout2-ce.elf package/debug/ 2>/dev/null || cp build/fallout2-ce package/debug/fallout2-ce.elf
           cd package
           zip -r ../fallout2-ce-switch.zip .
 
