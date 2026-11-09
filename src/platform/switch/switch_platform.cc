@@ -575,6 +575,13 @@ static double gPerfChangeGapMaxMs = 0.0;
 static int gPerfChangeGapsOver50Ms = 0;
 static int gPerfChangeGapsOver100Ms = 0;
 
+// Render errors and cursor movement per window.
+static int gPerfRenderErrors = 0;
+static char gPerfRenderLastError[200] = "";
+static int gPerfCursorMovedFrames = 0;
+static int gPerfLastCursorX = -1;
+static int gPerfLastCursorY = -1;
+
 // Palette changes per window.
 static int gPerfPaletteChanges = 0;
 static double gPerfPaletteTotalMs = 0.0;
@@ -719,6 +726,16 @@ void switchPerfRecordPaletteChange(unsigned long long startCounter)
     gPerfPaletteTotalMs += perfMsSince(startCounter);
 }
 
+void switchPerfRecordRenderError(const char* step, const char* error)
+{
+    if (!gPerfLogEnabled) {
+        return;
+    }
+
+    gPerfRenderErrors++;
+    snprintf(gPerfRenderLastError, sizeof(gPerfRenderLastError), "%s: %s", step, error != nullptr ? error : "");
+}
+
 void switchPerfMarkScreenUpdate()
 {
     gPerfScreenUpdatedThisFrame = true;
@@ -759,6 +776,9 @@ static void perfResetWindow(unsigned long long now)
     gPerfPresentSources.clear();
     gPerfPaletteChanges = 0;
     gPerfPaletteTotalMs = 0.0;
+    gPerfRenderErrors = 0;
+    gPerfRenderLastError[0] = '\0';
+    gPerfCursorMovedFrames = 0;
     gPerfChangedFrames = 0;
     gPerfChangeGapMaxMs = 0.0;
     gPerfChangeGapsOver50Ms = 0;
@@ -834,6 +854,12 @@ static void perfWriteWindow(FILE* stream, double elapsedSeconds, double windowSe
         }
         fprintf(stream, "\n");
     }
+
+    fprintf(stream,
+        "  cursor: moved_frames_per_second=%.1f render_errors=%d last_error=%s\n",
+        gPerfCursorMovedFrames / windowSeconds,
+        gPerfRenderErrors,
+        gPerfRenderLastError);
 
     char mapName[17];
     snprintf(mapName, sizeof(mapName), "%s", gMapHeader.name);
@@ -976,6 +1002,15 @@ void switchPerfRecordPresent(unsigned long long presentStartCounter)
         gPerfLastChangedFrameCounter = now;
         gPerfChangedFrames++;
         gPerfScreenUpdatedThisFrame = false;
+    }
+
+    int cursorX;
+    int cursorY;
+    mouseGetPosition(&cursorX, &cursorY);
+    if (cursorX != gPerfLastCursorX || cursorY != gPerfLastCursorY) {
+        gPerfCursorMovedFrames++;
+        gPerfLastCursorX = cursorX;
+        gPerfLastCursorY = cursorY;
     }
 
     gPerfFrames++;

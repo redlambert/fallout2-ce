@@ -537,9 +537,22 @@ void renderPresent()
     unsigned long long presentStart = SDL_GetPerformanceCounter();
 #endif
 
+#ifdef __SWITCH__
+    int updateResult = SDL_UpdateTexture(gSdlTexture, nullptr, gSdlTextureSurface->pixels, gSdlTextureSurface->pitch);
+    if (updateResult != 0) {
+        switchPerfRecordRenderError("update_texture", SDL_GetError());
+    }
+    if (SDL_RenderClear(gSdlRenderer) != 0) {
+        switchPerfRecordRenderError("render_clear", SDL_GetError());
+    }
+    if (SDL_RenderCopy(gSdlRenderer, gSdlTexture, nullptr, nullptr) != 0) {
+        switchPerfRecordRenderError("render_copy", SDL_GetError());
+    }
+#else
     SDL_UpdateTexture(gSdlTexture, nullptr, gSdlTextureSurface->pixels, gSdlTextureSurface->pitch);
     SDL_RenderClear(gSdlRenderer);
     SDL_RenderCopy(gSdlRenderer, gSdlTexture, nullptr, nullptr);
+#endif
     // render movie SDL texture if present
     movieRenderDirectOverlay();
     SDL_RenderPresent(gSdlRenderer);
