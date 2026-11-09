@@ -38,6 +38,8 @@ void switchPerfRecordFileOpen(const char* path, unsigned long long startCounter,
 void switchPerfRecordDirectoryScan(const char* path, unsigned long long startCounter);
 void switchPerfCountDirectoryCacheClear();
 void switchPerfRecordFileOpenError(const char* path, int error);
+void switchPerfCountWindowEvent(int windowEvent);
+void switchPerfCountRendererRebuild();
 
 // Parts of the frame that get timed separately.
 enum class SwitchPerfZoneId {

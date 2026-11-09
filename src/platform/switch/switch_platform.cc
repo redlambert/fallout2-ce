@@ -537,6 +537,11 @@ static int gPerfFileOpenErrors = 0;
 static int gPerfFileOpenLastError = 0;
 static char gPerfFileOpenLastErrorPath[256] = "";
 static FILE* gPerfLogStream = nullptr;
+static int gPerfFocusLost = 0;
+static int gPerfFocusGained = 0;
+static int gPerfSizeChanged = 0;
+static int gPerfOtherWindowEvents = 0;
+static int gPerfRendererRebuilds = 0;
 static std::unordered_map<std::string, PerfFileStats> gPerfFileStats;
 
 static double perfMsSince(unsigned long long startCounter)
@@ -624,6 +629,38 @@ void switchPerfRecordFileOpenError(const char* path, int error)
     snprintf(gPerfFileOpenLastErrorPath, sizeof(gPerfFileOpenLastErrorPath), "%s", path);
 }
 
+void switchPerfCountWindowEvent(int windowEvent)
+{
+    if (!gPerfLogEnabled) {
+        return;
+    }
+
+    switch (windowEvent) {
+    case SDL_WINDOWEVENT_FOCUS_LOST:
+        gPerfFocusLost++;
+        break;
+    case SDL_WINDOWEVENT_FOCUS_GAINED:
+        gPerfFocusGained++;
+        break;
+    case SDL_WINDOWEVENT_SIZE_CHANGED:
+    case SDL_WINDOWEVENT_RESIZED:
+        gPerfSizeChanged++;
+        break;
+    default:
+        gPerfOtherWindowEvents++;
+        break;
+    }
+}
+
+void switchPerfCountRendererRebuild()
+{
+    if (!gPerfLogEnabled) {
+        return;
+    }
+
+    gPerfRendererRebuilds++;
+}
+
 void switchPerfCountDirectoryCacheClear()
 {
     if (!gPerfLogEnabled) {
@@ -657,6 +694,11 @@ static void perfResetWindow(unsigned long long now)
     gPerfFileOpenErrors = 0;
     gPerfFileOpenLastError = 0;
     gPerfFileOpenLastErrorPath[0] = '\0';
+    gPerfFocusLost = 0;
+    gPerfFocusGained = 0;
+    gPerfSizeChanged = 0;
+    gPerfOtherWindowEvents = 0;
+    gPerfRendererRebuilds = 0;
     gPerfFileStats.clear();
 }
 
@@ -698,6 +740,37 @@ static void perfWriteWindow(FILE* stream, double elapsedSeconds, double windowSe
         gPerfFileOpenErrors,
         gPerfFileOpenLastError,
         gPerfFileOpenLastErrorPath);
+
+    int windowWidth = 0;
+    int windowHeight = 0;
+    int outputWidth = 0;
+    int outputHeight = 0;
+    Uint32 windowFlags = 0;
+    SDL_Window* window = SDL_GL_GetCurrentWindow();
+    if (window == nullptr) {
+        window = SDL_GetWindowFromID(1);
+    }
+    if (window != nullptr) {
+        SDL_GetWindowSize(window, &windowWidth, &windowHeight);
+        windowFlags = SDL_GetWindowFlags(window);
+        SDL_Renderer* renderer = SDL_GetRenderer(window);
+        if (renderer != nullptr) {
+            SDL_GetRendererOutputSize(renderer, &outputWidth, &outputHeight);
+        }
+    }
+
+    fprintf(stream,
+        "  screen: window=%dx%d output=%dx%d flags=0x%x focus_lost=%d focus_gained=%d size_changed=%d other_window_events=%d renderer_rebuilds=%d\n",
+        windowWidth,
+        windowHeight,
+        outputWidth,
+        outputHeight,
+        windowFlags,
+        gPerfFocusLost,
+        gPerfFocusGained,
+        gPerfSizeChanged,
+        gPerfOtherWindowEvents,
+        gPerfRendererRebuilds);
 
     if (gPerfFileStats.empty()) {
         return;

@@ -1073,6 +1073,9 @@ void _GNW95_process_message()
             break;
 #endif
         case SDL_WINDOWEVENT:
+#ifdef __SWITCH__
+            switchPerfCountWindowEvent(e.window.event);
+#endif
             switch (e.window.event) {
             case SDL_WINDOWEVENT_EXPOSED:
                 windowRefreshAll(&_scr_size);
@@ -1082,6 +1085,12 @@ void _GNW95_process_message()
                 break;
             case SDL_WINDOWEVENT_FOCUS_GAINED:
                 gProgramIsActive = true;
+#ifdef __SWITCH__
+                // Returning from a system screen (Home menu, on-screen
+                // keyboard) can leave the screen output in a slower state.
+                // Rebuild it the same way a resized PC window does.
+                handleWindowSizeChanged();
+#endif
                 movieHandleFocusGained();
                 if (!mouseDeviceInitMode()) {
                     debugPrint("Failed to initialize mouse mode on focus gained: %s\n", SDL_GetError());
@@ -1188,6 +1197,10 @@ void endTextInput()
     SDL_StopTextInput();
 #ifdef __SWITCH__
     gSwitchTextInputActive = false;
+
+    // The on-screen keyboard is a separate system screen. Rebuild the screen
+    // output after it closes, in case no focus event arrives.
+    handleWindowSizeChanged();
 #endif
 }
 

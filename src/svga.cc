@@ -423,6 +423,10 @@ static void destroyRenderer()
 
 void handleWindowSizeChanged()
 {
+#ifdef __SWITCH__
+    switchPerfCountRendererRebuild();
+#endif
+
     movieHandleRendererReset();
     destroyRenderer();
     if (createRenderer(screenGetWidth(), screenGetHeight())) {
