@@ -73,8 +73,8 @@ void switchPerfRecordRenderError(const char* step, const char* error);
 void switchPerfRecordPictureHash(const void* pixels, int pitch, int height);
 void switchPerfCheckGlErrors();
 
-// Writes which code made the heap grow since the last call (diagnostic
-// tracker in switch_alloc_track.cc).
+// Writes how often large graphics buffers were reused since the last call
+// (switch_alloc_track.cc).
 void switchAllocTrackWrite(FILE* stream);
 
 // Parts of the frame that get timed separately.

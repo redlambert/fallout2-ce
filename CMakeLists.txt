@@ -383,17 +383,13 @@ if(FALLOUT_SWITCH)
         "src/platform/switch/switch_alloc_track.cc"
     )
 
-    # Diagnostic: route every allocation through switch_alloc_track.cc to
-    # find what keeps making the heap grow.
+    # Reuse the graphics driver's large aligned buffers instead of letting
+    # them fragment the heap (see switch_alloc_track.cc).
     target_link_options(${EXECUTABLE_NAME} PRIVATE
-        "-Wl,--wrap=malloc"
-        "-Wl,--wrap=calloc"
-        "-Wl,--wrap=realloc"
         "-Wl,--wrap=memalign"
         "-Wl,--wrap=aligned_alloc"
         "-Wl,--wrap=posix_memalign"
-        "-Wl,--wrap=_Znwm"
-        "-Wl,--wrap=_Znam"
+        "-Wl,--wrap=free"
     )
 
     target_compile_definitions(${EXECUTABLE_NAME} PUBLIC __SWITCH__)
