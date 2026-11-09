@@ -23,6 +23,7 @@
 #include "combat.h"
 #include "config.h"
 #include "debug.h"
+#include "game_dialog.h"
 #include "light.h"
 #include "map.h"
 #include "mouse.h"
@@ -352,6 +353,16 @@ static const SDL_Scancode kArrowScancodes[] = {
 
 static bool gArrowHeld[4] = { false, false, false, false };
 
+// In dialogue each arrow press turns one page, so the stick acts like a
+// key there: one press per flick, then a slow repeat while held.
+static const double kDialogRepeatDelayMs = 500.0;
+static const double kDialogRepeatIntervalMs = 250.0;
+
+// In dialogue the stick must be pushed about halfway, and a tap the other
+// way right after a flick is ignored (the stick springing back past center).
+static const int kDialogStickThreshold = 16000;
+static const double kDialogReboundIgnoreMs = 250.0;
+
 static void pushKeyEvent(SDL_Scancode scancode, bool down)
 {
     SDL_Event event;
@@ -385,20 +396,75 @@ static void releaseAllKeys()
 
 // Right stick scrolls the map. The strongest direction wins, the others are
 // released. A held direction is re-sent every poll so the map scrolls
-// continuously, same as the previous Switch release.
+// continuously, same as the previous Switch release. In dialogue it repeats
+// slowly instead, so a flick turns one page.
 static void handleRightStick()
 {
+    static int heldDirection = -1;
+    static unsigned long long heldSince = 0;
+    static unsigned long long lastSent = 0;
+    static int lastTapDirection = -1;
+    static unsigned long long lastTapCounter = 0;
+
     HidAnalogStickState stick = padGetStickPos(&gKeyboardPad, 1);
 
+    bool inDialog = gameDialogWindowActive();
+    int threshold = inDialog ? kDialogStickThreshold : kRightStickDeadZone;
+
     int active = -1;
-    if (stick.y > kRightStickDeadZone && abs(stick.y) > abs(stick.x)) {
+    if (stick.y > threshold && abs(stick.y) > abs(stick.x)) {
         active = 0;
-    } else if (stick.y < -kRightStickDeadZone && abs(stick.y) > abs(stick.x)) {
+    } else if (stick.y < -threshold && abs(stick.y) > abs(stick.x)) {
         active = 1;
-    } else if (stick.x < -kRightStickDeadZone) {
+    } else if (stick.x < -threshold) {
         active = 2;
-    } else if (stick.x > kRightStickDeadZone) {
+    } else if (stick.x > threshold) {
         active = 3;
+    }
+
+    unsigned long long now = SDL_GetPerformanceCounter();
+    double msPerCount = 1000.0 / static_cast<double>(SDL_GetPerformanceFrequency());
+
+    bool directionChanged = active != heldDirection;
+    if (directionChanged) {
+        heldDirection = active;
+        heldSince = now;
+        lastSent = now;
+    }
+
+    // Dialogue: send taps (press and release) on our own schedule, so the
+    // game's fast key repeat never kicks in.
+    if (inDialog) {
+        for (int index = 0; index < 4; index++) {
+            if (gArrowHeld[index]) {
+                pushKeyEvent(kArrowScancodes[index], false);
+                gArrowHeld[index] = false;
+            }
+        }
+
+        if (active == -1) {
+            return;
+        }
+
+        bool tap = directionChanged;
+        if (tap && lastTapDirection != -1 && active == (lastTapDirection ^ 1)
+            && (now - lastTapCounter) * msPerCount < kDialogReboundIgnoreMs) {
+            // Opposite of the last flick, too soon: the stick springing back.
+            tap = false;
+        } else if (!tap) {
+            double heldMs = (now - heldSince) * msPerCount;
+            double sinceSentMs = (now - lastSent) * msPerCount;
+            tap = heldMs >= kDialogRepeatDelayMs && sinceSentMs >= kDialogRepeatIntervalMs;
+        }
+
+        if (tap) {
+            pushKeyEvent(kArrowScancodes[active], true);
+            pushKeyEvent(kArrowScancodes[active], false);
+            lastSent = now;
+            lastTapDirection = active;
+            lastTapCounter = now;
+        }
+        return;
     }
 
     for (int index = 0; index < 4; index++) {
