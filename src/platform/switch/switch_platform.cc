@@ -69,7 +69,7 @@ static double gCursorSpeedup = 1.0;
 // Options read from fallout2_nx.ini at startup.
 static bool gCpuBoostEnabled = true;
 static int gCpuBoostMode = 1;
-static bool gPerfLogEnabled = true;
+static bool gPerfLogEnabled = false;
 static bool gVsyncEnabled = true;
 static int gRenderTextureCount = 1;
 static bool gRenderUsesLock = false;
@@ -228,7 +228,7 @@ void switchPlatformInit(int argc, char** argv)
     snprintf(configPath, sizeof(configPath), "%s%s", gSwitchBaseDir, kSwitchConfigFileName);
     gCpuBoostMode = readIniInt(configPath, "CPU_BOOST", 1) == 1 ? 1 : 0;
     gCpuBoostEnabled = gCpuBoostMode == 1;
-    gPerfLogEnabled = readIniInt(configPath, "PERF_LOG", 1) == 1;
+    gPerfLogEnabled = readIniInt(configPath, "PERF_LOG", 0) == 1;
     gVsyncEnabled = readIniInt(configPath, "VSYNC", 1) == 1;
     gRenderTextureCount = readIniInt(configPath, "RENDER_TEXTURES", 1) == 2 ? 2 : 1;
     gRenderUsesLock = readIniInt(configPath, "RENDER_UPLOAD", 0) == 1;
