@@ -3,6 +3,8 @@
 
 #ifdef __SWITCH__
 
+#include <stdio.h>
+
 #include "dinput.h"
 #include "svga.h"
 
@@ -70,6 +72,10 @@ void switchPerfRecordRenderError(const char* step, const char* error);
 // Hashes the finished frame to count frames whose picture really changed.
 void switchPerfRecordPictureHash(const void* pixels, int pitch, int height);
 void switchPerfCheckGlErrors();
+
+// Writes which code made the heap grow since the last call (diagnostic
+// tracker in switch_alloc_track.cc).
+void switchAllocTrackWrite(FILE* stream);
 
 // Parts of the frame that get timed separately.
 enum class SwitchPerfZoneId {

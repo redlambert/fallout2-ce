@@ -1027,6 +1027,8 @@ static void perfWriteWindow(FILE* stream, double elapsedSeconds, double windowSe
         gPerfGlErrors,
         gPerfGlLastError);
 
+    switchAllocTrackWrite(stream);
+
     int windowWidth = 0;
     int windowHeight = 0;
     int outputWidth = 0;
