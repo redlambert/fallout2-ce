@@ -376,7 +376,16 @@ bool screenIsExclusiveFullscreen()
 
 static bool createRenderer(int width, int height)
 {
-    gSdlRenderer = SDL_CreateRenderer(gSdlWindow, -1, 0);
+    Uint32 rendererFlags = 0;
+#ifdef __SWITCH__
+    // Wait for the screen refresh, so frames can't pile up faster than the
+    // Switch display shows them.
+    if (switchWantsVsync()) {
+        rendererFlags |= SDL_RENDERER_PRESENTVSYNC;
+    }
+#endif
+
+    gSdlRenderer = SDL_CreateRenderer(gSdlWindow, -1, rendererFlags);
     if (gSdlRenderer == nullptr) {
         return false;
     }

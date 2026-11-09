@@ -19,6 +19,10 @@ void switchPlatformInit(int argc, char** argv);
 // Folder that holds Fallout 2's `master.dat`, with trailing slash.
 const char* switchGetBaseDir();
 
+// True when presenting should wait for the screen refresh (VSYNC in
+// fallout2_nx.ini, on by default).
+bool switchWantsVsync();
+
 // Replaces screen settings with values that suit the Switch display.
 // Defaults can be changed in `fallout2_nx.ini` in the base folder.
 void switchApplyScreenOverrides(int* width, int* height, int* scale, WindowMode* mode);

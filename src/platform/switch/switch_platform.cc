@@ -62,7 +62,9 @@ static double gCursorSpeedup = 1.0;
 
 // Options read from fallout2_nx.ini at startup.
 static bool gCpuBoostEnabled = true;
+static int gCpuBoostMode = 1;
 static bool gPerfLogEnabled = true;
+static bool gVsyncEnabled = true;
 
 static bool fileExists(const char* dir, const char* name)
 {
@@ -121,16 +123,16 @@ static bool launchedAsEtTu(int argc, char** argv)
     return false;
 }
 
-// Reads a 0/1 value from fallout2_nx.ini without the game's config system,
+// Reads a number from fallout2_nx.ini without the game's config system,
 // which isn't ready this early in startup.
-static bool readIniFlag(const char* path, const char* key, bool defaultValue)
+static int readIniInt(const char* path, const char* key, int defaultValue)
 {
     FILE* stream = fopen(path, "rt");
     if (stream == nullptr) {
         return defaultValue;
     }
 
-    bool value = defaultValue;
+    int value = defaultValue;
     size_t keyLength = strlen(key);
     char line[256];
 
@@ -158,7 +160,9 @@ static bool readIniFlag(const char* path, const char* key, bool defaultValue)
             ch++;
         }
 
-        value = *ch == '1';
+        if (*ch >= '0' && *ch <= '9') {
+            value = atoi(ch);
+        }
     }
 
     fclose(stream);
@@ -175,9 +179,12 @@ static void restoreCpuClock()
 
 // Asks for the higher CPU clock. Opening a system screen (such as the
 // on-screen keyboard) resets it, so this is repeated every few seconds.
+//
+// Mode 1 ("fast load") is the only boost available to games: CPU at
+// 1785 MHz, graphics chip lowered to 76.8 MHz.
 static void applyCpuBoost()
 {
-    Result rc = appletSetCpuBoostMode(static_cast<ApmCpuBoostMode>(1));
+    Result rc = appletSetCpuBoostMode(static_cast<ApmCpuBoostMode>(gCpuBoostMode));
     if (R_FAILED(rc)) {
         gCpuBoostFailures++;
         gCpuBoostLastError = rc;
@@ -209,17 +216,21 @@ void switchPlatformInit(int argc, char** argv)
 
     char configPath[512];
     snprintf(configPath, sizeof(configPath), "%s%s", gSwitchBaseDir, kSwitchConfigFileName);
-    gCpuBoostEnabled = readIniFlag(configPath, "CPU_BOOST", true);
-    gPerfLogEnabled = readIniFlag(configPath, "PERF_LOG", true);
+    gCpuBoostMode = readIniInt(configPath, "CPU_BOOST", 1) == 1 ? 1 : 0;
+    gCpuBoostEnabled = gCpuBoostMode == 1;
+    gPerfLogEnabled = readIniInt(configPath, "PERF_LOG", 1) == 1;
+    gVsyncEnabled = readIniInt(configPath, "VSYNC", 1) == 1;
 
     if (gCpuBoostEnabled) {
         // Raises the CPU from 1020 MHz to 1785 MHz while the game runs.
         // Only works when launched through a game (title override), not the
         // album applet, so a failure here turns the option off.
-        if (R_SUCCEEDED(appletSetCpuBoostMode(static_cast<ApmCpuBoostMode>(1)))) {
+        Result rc = appletSetCpuBoostMode(static_cast<ApmCpuBoostMode>(gCpuBoostMode));
+        if (R_SUCCEEDED(rc)) {
             atexit(restoreCpuClock);
         } else {
             gCpuBoostEnabled = false;
+            gCpuBoostMode = 0;
         }
     }
 
@@ -229,6 +240,11 @@ void switchPlatformInit(int argc, char** argv)
 const char* switchGetBaseDir()
 {
     return gSwitchBaseDir;
+}
+
+bool switchWantsVsync()
+{
+    return gVsyncEnabled;
 }
 
 void switchApplyScreenOverrides(int* width, int* height, int* scale, WindowMode* mode)
@@ -707,9 +723,10 @@ static void perfWriteWindow(FILE* stream, double elapsedSeconds, double windowSe
     int frames = gPerfFrames > 0 ? gPerfFrames : 1;
 
     fprintf(stream,
-        "t=%.0fs cpu_boost=%d fps=%.1f frame_avg=%.1fms frame_max=%.1fms present_avg=%.1fms present_max=%.1fms\n",
+        "t=%.0fs cpu_boost=%d vsync=%d fps=%.1f frame_avg=%.1fms frame_max=%.1fms present_avg=%.1fms present_max=%.1fms\n",
         elapsedSeconds,
-        gCpuBoostEnabled ? 1 : 0,
+        gCpuBoostEnabled ? gCpuBoostMode : 0,
+        gVsyncEnabled ? 1 : 0,
         gPerfFrames / windowSeconds,
         gPerfFrameTotalMs / frames,
         gPerfFrameMaxMs,
@@ -733,8 +750,20 @@ static void perfWriteWindow(FILE* stream, double elapsedSeconds, double windowSe
         gPerfDirectoryScanMaxPath,
         gPerfDirectoryCacheClears);
 
+    // Current clock setting from the system, for example 0x9222000a means
+    // boosted CPU with lowered graphics speed (handheld).
+    ApmPerformanceMode performanceMode = ApmPerformanceMode_Normal;
+    u32 performanceConfiguration = 0;
+    Result modeResult = apmGetPerformanceMode(&performanceMode);
+    Result configResult = R_SUCCEEDED(modeResult)
+        ? apmGetPerformanceConfiguration(performanceMode, &performanceConfiguration)
+        : modeResult;
+
     fprintf(stream,
-        "  cpu_boost_failures=%u last_boost_error=0x%x open_errors=%d last_open_error=%d (%s)\n",
+        "  clocks: mode=%d config=0x%x (result=0x%x) cpu_boost_failures=%u last_boost_error=0x%x open_errors=%d last_open_error=%d (%s)\n",
+        static_cast<int>(performanceMode),
+        performanceConfiguration,
+        configResult,
         gCpuBoostFailures,
         gCpuBoostLastError,
         gPerfFileOpenErrors,
