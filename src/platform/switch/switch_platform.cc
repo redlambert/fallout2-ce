@@ -512,6 +512,10 @@ void switchMouseApply(MouseData* mouseData)
 
 // MARK: Performance log
 
+// Defined in animation.cc.
+int switchPerfBusyAnimationSequences();
+int switchPerfBusyAnimationMoves();
+
 static const char* const kPerfZoneNames[] = {
     "input",
     "window_refresh",
@@ -558,6 +562,17 @@ static int gPerfFocusGained = 0;
 static int gPerfSizeChanged = 0;
 static int gPerfOtherWindowEvents = 0;
 static int gPerfRendererRebuilds = 0;
+
+// Picture changes: frames where something on screen was redrawn.
+static bool gPerfScreenUpdatedThisFrame = false;
+static int gPerfChangedFrames = 0;
+static unsigned long long gPerfLastChangedFrameCounter = 0;
+static double gPerfChangeGapMaxMs = 0.0;
+static int gPerfChangeGapsOver50Ms = 0;
+static int gPerfChangeGapsOver100Ms = 0;
+
+// How many times each timed part of the game ran, per window.
+static int gPerfZoneCalls[static_cast<int>(SwitchPerfZoneId::Count)] = {};
 static std::unordered_map<std::string, PerfFileStats> gPerfFileStats;
 
 static double perfMsSince(unsigned long long startCounter)
@@ -580,6 +595,7 @@ SwitchPerfZone::SwitchPerfZone(SwitchPerfZoneId id)
 
     if (_outermost) {
         _start = SDL_GetPerformanceCounter();
+        gPerfZoneCalls[_id]++;
     }
 }
 
@@ -668,6 +684,11 @@ void switchPerfCountWindowEvent(int windowEvent)
     }
 }
 
+void switchPerfMarkScreenUpdate()
+{
+    gPerfScreenUpdatedThisFrame = true;
+}
+
 void switchPerfCountRendererRebuild()
 {
     if (!gPerfLogEnabled) {
@@ -697,7 +718,13 @@ static void perfResetWindow(unsigned long long now)
 
     for (int index = 0; index < kPerfZoneCount; index++) {
         gPerfZoneTotalMs[index] = 0.0;
+        gPerfZoneCalls[index] = 0;
     }
+
+    gPerfChangedFrames = 0;
+    gPerfChangeGapMaxMs = 0.0;
+    gPerfChangeGapsOver50Ms = 0;
+    gPerfChangeGapsOver100Ms = 0;
 
     gPerfFileOpens = 0;
     gPerfFileOpenTotalMs = 0.0;
@@ -738,6 +765,24 @@ static void perfWriteWindow(FILE* stream, double elapsedSeconds, double windowSe
         fprintf(stream, " %s=%.1fms", kPerfZoneNames[index], gPerfZoneTotalMs[index] / frames);
     }
     fprintf(stream, "\n");
+
+    fprintf(stream, "  calls per second:");
+    for (int index = 0; index < kPerfZoneCount; index++) {
+        fprintf(stream, " %s=%.1f", kPerfZoneNames[index], gPerfZoneCalls[index] / windowSeconds);
+    }
+    fprintf(stream, "\n");
+
+    fprintf(stream,
+        "  picture: changed_fps=%.1f longest_gap=%.1fms gaps_over_50ms=%d gaps_over_100ms=%d\n",
+        gPerfChangedFrames / windowSeconds,
+        gPerfChangeGapMaxMs,
+        gPerfChangeGapsOver50Ms,
+        gPerfChangeGapsOver100Ms);
+
+    fprintf(stream,
+        "  animation slots: sequences_busy=%d/64 moves_busy=%d/64\n",
+        switchPerfBusyAnimationSequences(),
+        switchPerfBusyAnimationMoves());
 
     fprintf(stream,
         "  files: opens=%d open_total=%.0fms open_max=%.1fms dir_scans=%d dir_scan_total=%.0fms dir_scan_max=%.1fms (%s) cache_clears=%d\n",
@@ -845,6 +890,25 @@ void switchPerfRecordPresent(unsigned long long presentStartCounter)
     double presentMs = (now - presentStartCounter) * 1000.0 / frequency;
     double frameMs = (now - gPerfLastPresentEnd) * 1000.0 / frequency;
     gPerfLastPresentEnd = now;
+
+    if (gPerfScreenUpdatedThisFrame) {
+        if (gPerfLastChangedFrameCounter != 0) {
+            double gapMs = (now - gPerfLastChangedFrameCounter) * 1000.0 / frequency;
+            if (gapMs > gPerfChangeGapMaxMs) {
+                gPerfChangeGapMaxMs = gapMs;
+            }
+            if (gapMs > 50.0) {
+                gPerfChangeGapsOver50Ms++;
+            }
+            if (gapMs > 100.0) {
+                gPerfChangeGapsOver100Ms++;
+            }
+        }
+
+        gPerfLastChangedFrameCounter = now;
+        gPerfChangedFrames++;
+        gPerfScreenUpdatedThisFrame = false;
+    }
 
     gPerfFrames++;
     gPerfFrameTotalMs += frameMs;

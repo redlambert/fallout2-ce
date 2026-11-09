@@ -3601,4 +3601,23 @@ static void reportOverloaded(Object* critter)
     displayMonitorAddMessage(formattedText);
 }
 
+#ifdef __SWITCH__
+// Busy animation slots, for the Switch performance log.
+int switchPerfBusyAnimationSequences()
+{
+    int busy = 0;
+    for (int index = 0; index < ANIMATION_SEQUENCE_LIST_CAPACITY; index++) {
+        if (gAnimationSequences[index].step != ANIM_COMPLETE) {
+            busy++;
+        }
+    }
+    return busy;
+}
+
+int switchPerfBusyAnimationMoves()
+{
+    return gAnimationCurrentSad;
+}
+#endif
+
 } // namespace fallout

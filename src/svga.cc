@@ -313,6 +313,10 @@ void _GNW95_ShowRect(unsigned char* src, int srcPitch, int unused, int srcX, int
 {
     (void)unused;
 
+#ifdef __SWITCH__
+    switchPerfMarkScreenUpdate();
+#endif
+
     blitBufferToBuffer(src + srcPitch * srcY + srcX, srcWidth, srcHeight, srcPitch, (unsigned char*)gSdlSurface->pixels + gSdlSurface->pitch * destY + destX, gSdlSurface->pitch);
 
     SDL_Rect srcRect;
