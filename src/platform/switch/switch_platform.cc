@@ -609,6 +609,10 @@ static char gPerfRenderLastError[200] = "";
 static int gPerfCursorMovedFrames = 0;
 static int gPerfLastCursorX = -1;
 static int gPerfLastCursorY = -1;
+static unsigned long long gPerfLastPictureHash = 0;
+static int gPerfPictureChangedFrames = 0;
+static double gPerfPictureGapMaxMs = 0.0;
+static unsigned long long gPerfLastPictureChangeCounter = 0;
 
 // Palette changes per window.
 static int gPerfPaletteChanges = 0;
@@ -764,6 +768,38 @@ void switchPerfRecordRenderError(const char* step, const char* error)
     snprintf(gPerfRenderLastError, sizeof(gPerfRenderLastError), "%s: %s", step, error != nullptr ? error : "");
 }
 
+void switchPerfRecordPictureHash(const void* pixels, int pitch, int height)
+{
+    if (!gPerfLogEnabled || pixels == nullptr) {
+        return;
+    }
+
+    // FNV-1a over every other row: cheap, and catches any real movement.
+    const unsigned char* bytes = static_cast<const unsigned char*>(pixels);
+    unsigned long long hash = 1469598103934665603ULL;
+    for (int y = 0; y < height; y += 2) {
+        const unsigned long long* row = reinterpret_cast<const unsigned long long*>(bytes + y * pitch);
+        int words = pitch / 8;
+        for (int x = 0; x < words; x++) {
+            hash ^= row[x];
+            hash *= 1099511628211ULL;
+        }
+    }
+
+    if (hash != gPerfLastPictureHash) {
+        unsigned long long now = SDL_GetPerformanceCounter();
+        if (gPerfLastPictureChangeCounter != 0) {
+            double gapMs = (now - gPerfLastPictureChangeCounter) * 1000.0 / static_cast<double>(SDL_GetPerformanceFrequency());
+            if (gapMs > gPerfPictureGapMaxMs) {
+                gPerfPictureGapMaxMs = gapMs;
+            }
+        }
+        gPerfLastPictureChangeCounter = now;
+        gPerfLastPictureHash = hash;
+        gPerfPictureChangedFrames++;
+    }
+}
+
 void switchPerfMarkScreenUpdate()
 {
     gPerfScreenUpdatedThisFrame = true;
@@ -807,6 +843,8 @@ static void perfResetWindow(unsigned long long now)
     gPerfRenderErrors = 0;
     gPerfRenderLastError[0] = '\0';
     gPerfCursorMovedFrames = 0;
+    gPerfPictureChangedFrames = 0;
+    gPerfPictureGapMaxMs = 0.0;
     gPerfChangedFrames = 0;
     gPerfChangeGapMaxMs = 0.0;
     gPerfChangeGapsOver50Ms = 0;
@@ -886,6 +924,11 @@ static void perfWriteWindow(FILE* stream, double elapsedSeconds, double windowSe
         }
         fprintf(stream, "\n");
     }
+
+    fprintf(stream,
+        "  image: really_changed_frames_per_second=%.1f longest_unchanged=%.1fms\n",
+        gPerfPictureChangedFrames / windowSeconds,
+        gPerfPictureGapMaxMs);
 
     fprintf(stream,
         "  cursor: moved_frames_per_second=%.1f render_errors=%d last_error=%s\n",
