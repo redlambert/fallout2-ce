@@ -27,6 +27,10 @@
 #include "text_object.h"
 #include "window_manager.h"
 
+#ifdef __SWITCH__
+#include "platform/switch/switch_menu_points.h"
+#endif
+
 namespace fallout {
 
 #define PREFERENCES_WINDOW_WIDTH 640
@@ -1650,5 +1654,54 @@ static void _DoThing(int eventCode)
 
     _changed = true;
 }
+
+#ifdef __SWITCH__
+// Each preference is one big button. Dials and switches change when the
+// click lands near the dial; sliders set the value from the click's x. These
+// points follow the same math as _DoThing.
+int preferencesGetMenuPoints(int window, const Button* button, SwitchMenuPoint* points, int capacity)
+{
+    if (window != gPreferencesWindow) {
+        return -1;
+    }
+
+    for (int index = 0; index < PREF_COUNT; index++) {
+        PreferenceDescription* meta = &(gPreferenceDescriptions[index]);
+        if (meta->btn != button->id) {
+            continue;
+        }
+
+        int count = 0;
+        if (index <= LAST_PRIMARY_PREF) {
+            // Dial: a click near its center turns it.
+            if (capacity > 0) {
+                points[0].x = meta->knobX + 23;
+                points[0].y = meta->knobY + 21;
+                count = 1;
+            }
+        } else if (index <= LAST_SECONDARY_PREF) {
+            // Switch: a click near its center flips it.
+            if (capacity > 0) {
+                points[0].x = meta->knobX + 11;
+                points[0].y = meta->knobY + 12;
+                count = 1;
+            }
+        } else {
+            // Slider: 11 stops from 0% to 100%, so left and right on the
+            // D-pad pick a value and A sets it.
+            int y = (button->rect.top + button->rect.bottom) / 2;
+            for (int stop = 0; stop <= 10 && count < capacity; stop++) {
+                points[count].x = 384 + 6 + (219 * stop) / 10;
+                points[count].y = y;
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    return -1;
+}
+#endif
 
 } // namespace fallout
